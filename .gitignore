@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+
+# Generated Xcode project (regenerate with `xcodegen generate`)
+*.xcodeproj
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Signing / secrets — NEVER commit these (see CLAUDE.md)
+*.p12
+*.cer
+*.provisionprofile
+*.mobileprovision
+sparkle_private_key*
+config_private_key*
+*.pem
+ExportOptions.plist
+
+# Distribution artifacts
+*.dmg
+*.zip
+appcast.xml

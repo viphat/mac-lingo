@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+
+      - name: Install tooling
+        run: brew install xcodegen swiftlint swift-format
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Lint
+        run: |
+          swiftlint --strict
+          swift-format lint --recursive Sources
+
+      - name: Build
+        run: xcodebuild -scheme MacLingo -configuration Debug build CODE_SIGNING_ALLOWED=NO
+
+      - name: Test
+        run: xcodebuild -scheme MacLingo -destination 'platform=macOS' test CODE_SIGNING_ALLOWED=NO

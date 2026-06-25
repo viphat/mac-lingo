@@ -1,0 +1,87 @@
+# XcodeGen project definition — source of truth for MacLingo.xcodeproj.
+# Regenerate the project with `xcodegen generate` (the .xcodeproj is git-ignored).
+name: MacLingo
+
+options:
+  bundleIdPrefix: com.sharewis.maclingo
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete        # Swift 6 strict concurrency (CLAUDE.md)
+    ARCHS: "$(ARCHS_STANDARD)"                 # universal (arm64 + x86_64)
+    ONLY_ACTIVE_ARCH: false
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    ENABLE_HARDENED_RUNTIME: true
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""                        # TODO: Developer ID team for signing
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: "2.0.0"
+  Defaults:
+    url: https://github.com/sindresorhus/Defaults
+    from: "9.0.0"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
+
+targets:
+  MacLingo:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/MacLingo
+    info:
+      path: Sources/MacLingo/Resources/Info.plist
+      properties:
+        LSUIElement: true                       # menu-bar agent, no Dock icon
+        LSMinimumSystemVersion: "15.0"
+        CFBundleDisplayName: MacLingo
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSHumanReadableCopyright: "© 2026 ShareWis"
+        # Sparkle keys filled in at Phase 8 (SUFeedURL, SUPublicEDKey).
+    entitlements:
+      path: Sources/MacLingo/Resources/MacLingo.entitlements
+      properties:
+        com.apple.security.app-sandbox: false   # sandbox is incompatible (spec §10)
+        com.apple.security.network.client: true
+    dependencies:
+      - package: KeyboardShortcuts
+      - package: Defaults
+      - package: Sparkle
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sharewis.maclingo
+        CODE_SIGN_IDENTITY: "Developer ID Application"
+
+  MacLingoTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/MacLingoTests
+    dependencies:
+      - target: MacLingo
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sharewis.maclingo.tests
+
+schemes:
+  MacLingo:
+    build:
+      targets:
+        MacLingo: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MacLingoTests

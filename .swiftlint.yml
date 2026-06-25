@@ -1,0 +1,55 @@
+# SwiftLint configuration — MacLingo
+# Run `swiftlint` before every commit (see CLAUDE.md).
+
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+  - DerivedData
+
+disabled_rules:
+  # Phase-marker TODOs (e.g. "TODO(Phase 2): …") are intentional in this phased
+  # build and tracked in the plan; they must not fail the lint gate.
+  - todo
+  # swift-format owns comma/whitespace style (it requires trailing commas in
+  # multiline literals); avoid a tug-of-war by not enforcing it in SwiftLint too.
+  - trailing_comma
+
+opt_in_rules:
+  - empty_count
+  - explicit_init
+  - first_where
+  - force_unwrapping        # CLAUDE.md: no force unwraps in non-test code
+  - implicitly_unwrapped_optional
+  - last_where
+  - redundant_nil_coalescing
+  - toggle_bool
+
+analyzer_rules:
+  - unused_declaration
+  - unused_import
+
+# Force unwraps and try! are forbidden in non-test code (CLAUDE.md invariant).
+force_cast: error
+force_try: error
+force_unwrapping:
+  severity: error
+
+line_length:
+  warning: 120
+  error: 160
+  ignores_comments: true
+
+type_body_length:
+  warning: 350
+  error: 500
+
+file_length:
+  warning: 500
+  error: 800
+
+identifier_name:
+  min_length: 2
+  excluded: [id, C0, C1, ax, ok, dt, sl, tl]
