@@ -372,6 +372,9 @@ hooks from Phase 5 must already account for it.)*
     sticky-disable).
 - **Defined degraded behavior when Free is blocked (spec §6.1):** AI key → one-tap
   fallback to AI; else Cloud configured → fall back to Cloud; else actionable error.
+- **Release gate — legal/ToS sign-off (spec §6.1):** legal/release sign-off on the
+  unofficial Google Free endpoint is **required before it ships as the default**;
+  the ToS posture is recorded in the release notes. Tracked here, gated in Phase 8.
 - **Pinned-panel cache on a live `providerConfigRevision` bump (spec §5.3/§5.5):**
   retain the already-rendered pinned result unchanged; subsequent presentation
   changes re-resolve under the new revision (guaranteed cache miss).
@@ -417,6 +420,8 @@ hooks from Phase 5 must already account for it.)*
   config keys ships an epoch **at or above** the current floor; document the
   epoch-bump recovery procedure.
 - Run the full **acceptance-test matrix (spec §12)** as the release gate.
+- **Confirm the legal/ToS sign-off** on the Google Free default is recorded before
+  release (spec §6.1; tracked in Phase 7).
 - README, privacy note (what's sent where, the signed-config disclosure), changelog.
 - Release checklist + smoke test on a clean macOS 15 machine.
 
@@ -488,8 +493,10 @@ hooks from Phase 5 must already account for it.)*
 
 ## Out of scope for v1 (candidate backlog)
 
+- Translate-in-place / translate-and-overwrite of the selection (spec decision #6).
 - Translation history, favorites, glossary.
 - OCR / image / speech translation.
 - Additional engines (DeepL, Gemini, Anthropic).
 - Per-app rules and additional target languages.
 - Google Cloud **v3** (service-account flow, glossaries).
+- Mac App Store distribution (sandbox-incompatible — spec §10).
