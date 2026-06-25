@@ -15,7 +15,7 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 | 1 | Settings, permissions & reconciliation | ✅ Done (commit `0c6a55d`) |
 | 2 | Hotkey + text capture | 🚧 Code complete — actor + wiring done; on-device QA pending |
 | 3 | Translation service + Google Free + modal (plain text) | 🚧 Code complete — pipeline + modal done; on-device QA pending |
-| 4 | Formatting preservation + markup trust boundary | ⛔ Not started |
+| 4 | Formatting preservation + markup trust boundary | 🚧 Code complete — codec + sanitizer + rich modal/copy done; on-device QA pending |
 | 5 | AI providers (BYOK) + Keychain + live reconciliation | ⛔ Not started |
 | 6 | Google Cloud provider | ⛔ Not started |
 | 7 | Networking trust boundary, remote config & hardening | ⛔ Not started |
@@ -23,7 +23,7 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 
 **Toolchain:** Xcode 26.5, macOS 26.5 SDK, Swift 6 strict concurrency.
 **Build verified:** `xcodebuild` BUILD + TEST SUCCEEDED; `swiftlint --strict` and
-`swift-format --strict` clean. **74 unit tests passing.**
+`swift-format --strict` clean. **100 unit tests passing.**
 
 ---
 
@@ -121,10 +121,46 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 - **Tests (+28):** `LanguageAggregatorTests` (8), `GoogleFreeTests` (10, incl. provider
   over a mock client), `RequestRegistryTests` (4), `PanelSessionTests` (7 incl. gated
   interleaving). **74 tests total.**
-- **Deferred to later phases (by design):** rich `FormattedText` from captured RTF/HTML
-  (Phase 4); engine selector / Enhance-with-AI / target switcher *UI* (Phase 5);
-  rich RTF copy-out (Phase 4); networking redirect/allowlist *hardening* via a
+- **Deferred to later phases (by design):** engine selector / Enhance-with-AI /
+  target switcher *UI* (Phase 5); networking redirect/allowlist *hardening* via a
   `URLSession` delegate (Phase 7 — host allowlist is already enforced at build time).
+
+### Phase 4 — formatting + markup trust boundary (code complete) 🚧
+- **Model (`TranslationTypes.swift`):** `InlineStyle` (OptionSet, allowlist =
+  {bold, italic, underline, code}), `InlineRun` (text + style), `BlockKind`
+  (`paragraph` / `listItem(level, ordered)`). `FormattedText.Block` now carries
+  `runs` + `kind`; `text`/`plainText`/`Block(index:text:)`/`isEmpty` kept for
+  back-compat. `codecVersion` bumped **1 → 2** (Phase 3 plain-text cache entries miss).
+- **`MarkupSanitizer` (`Markup/`, spec §5.4):** the trust boundary for captured
+  HTML, captured RTF, and engine HTML alike.
+  - **HTML via a hand-rolled `HTMLTokenizer`** — *never* `NSAttributedString`'s HTML
+    importer, so **no remote resource ever loads**. Allowlisted inline tags
+    (`b/strong`, `i/em`, `u`, `code`) → styles; block tags (`p`, `div`, `br`, `li`,
+    `h1–6`, …) → block boundaries; `ul/ol` → list level + ordering; `<script>`/
+    `<style>` content dropped; unknown tags stripped (text kept); entities decoded;
+    caps on nesting depth + node/char count (reject → caller degrades to plain).
+  - **RTF via `NSAttributedString` (`.rtf` only — no network):** attachments dropped,
+    only {bold, italic, underline, code} traits kept; colors/sizes/links/fonts ignored.
+- **`RichTextCodec` (`Markup/`, spec §3.4):** `parse` (dispatch to sanitizer);
+  **sentinel-token** encode/decode for Google Free (PUA markers per styled run,
+  flat `SentinelParser` state machine with whitelist + balance + matching-multiset
+  validation; **degrade-to-plain-within-block** on any violation); **HTML-tag**
+  encode/decode for AI/Cloud (escape + wrap; balance check + sanitize; degrade on
+  imbalance). Styling is **never** reapplied by offset.
+- **`GoogleFreeProvider`:** styled blocks now encode → translate → validate/decode
+  via the sentinel codec (plain blocks unchanged); block `kind` carried through;
+  reassembled by block index.
+- **`FormattedTextRenderer` (`Markup/`):** `FormattedText` → SwiftUI `Text` (per-run
+  bold/italic/underline/monospaced, list markers, 1:1 block breaks) and → sanitized
+  **RTF** `Data` for rich copy-out. Modal renders the rich text; **Copy** writes RTF
+  + plain-text fallback (spec §3.4).
+- **`TranslationCoordinator`:** builds the snapshot from `RichTextCodec.parse(rich)`,
+  falling back to `plainText` when there's no rich payload or it can't be sanitized.
+- **Tests (+26):** `MarkupSanitizerTests` (14 — style extraction, structure, script/
+  remote-resource/attribute stripping, entity decode, caps, RTF attachment/color/
+  newline handling), `RichTextCodecTests` (11 — sentinel + HTML round-trips, reorder,
+  degrade-to-plain on missing/duplicate/unbalanced/misnested markers), `GoogleFreeTests`
+  (+1 end-to-end sentinel round-trip over an echo client). **100 tests total.**
 
 ---
 
@@ -158,10 +194,13 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 - [ ] **On-device QA** (manual; built app + Accessibility) → see **Human tasks** below.
 
 ### Phase 4 — formatting + markup trust boundary
-- [ ] `RichTextCodec` (RTF/HTML ↔ `FormattedText`, block indices, `codecVersion`).
-- [ ] Tagged-segment encoding (HTML tags / sentinel tokens); structural validation;
+- [x] `RichTextCodec` (RTF/HTML ↔ `FormattedText`, block indices, `codecVersion` → 2).
+- [x] Tagged-segment encoding (HTML tags / sentinel tokens); structural validation;
       degrade-to-plain on failure.
-- [ ] `MarkupSanitizer` (attribute allowlist, RTF normalization, no remote resources, caps).
+- [x] `MarkupSanitizer` (attribute allowlist, RTF normalization, no remote resources, caps).
+- [x] Rich modal rendering (SwiftUI `Text`) + Copy writes sanitized RTF + plain fallback.
+- [x] Build + lint clean; tests pass. **Commit Phase 4.**
+- [ ] **On-device QA** (manual; styled selections in real apps + rich-paste) → Human tasks.
 
 ### Phase 5 — AI providers (BYOK) + live reconciliation
 - [ ] OpenAI + DeepSeek providers (shared HTML round-trip prompt, `promptVersion`).
@@ -210,6 +249,20 @@ Needs a built app with Accessibility granted, plus live network.
       transient opens, pinned accumulates.
 - [ ] Copy → plain text on the clipboard (rich RTF copy lands in Phase 4).
 - [ ] Live endpoint sanity: rate-limit/backoff behaves; error state shows Retry.
+
+### On-device formatting QA (deferred from Phase 4)
+Needs a built app + live network + rich source/target apps.
+- [ ] Multi-paragraph bold/italic/underline selection (TextEdit, Word, Pages, browser)
+      → line breaks preserved 1:1; inline styling per the §6.3 matrix.
+- [ ] Google Free: inline styling survives via sentinel tokens; a block whose tokens
+      get mangled by the translator **degrades to plain-within-block** (structure kept).
+- [ ] Ordered/unordered lists → markers + indentation render; levels preserved.
+- [ ] Copy → paste into a rich editor keeps surviving styling; paste into a plain
+      field gets clean text (RTF + plain fallback both on the pasteboard).
+- [ ] Capture HTML with `<img>`/`<script>`/remote `<link>` → no network load, no
+      script/remote content rendered (verify with Little Snitch / Charles).
+- [ ] Capture RTF with an embedded image/attachment + hyperlink → attachment dropped,
+      link text kept without the URL.
 
 ### Other known human-only gates (forward references)
 - [ ] **Phase 3 (legal):** Google Free unofficial-endpoint ToS / legal release sign-off

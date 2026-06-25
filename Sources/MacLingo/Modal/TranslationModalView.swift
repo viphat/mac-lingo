@@ -1,14 +1,14 @@
 import SwiftUI
 
 /// View model bridging a `PanelSession.Display` to the SwiftUI modal (spec §3.3).
-/// Phase 3 renders **plain text**; Phase 4 swaps the body for an `AttributedString`
-/// once `RichTextCodec` lands. User actions are forwarded via closures the
-/// `ModalController` wires to the session.
+/// Carries the rich `FormattedText` so the view can render styled runs and 1:1
+/// block breaks (`FormattedTextRenderer`). User actions are forwarded via closures
+/// the `ModalController` wires to the session.
 @MainActor
 final class ModalViewModel: ObservableObject {
 
     struct ResultDisplay: Equatable {
-        let text: String
+        let formatted: FormattedText
         let sourceTag: String
         let targetTag: String
         let engineName: String
@@ -39,7 +39,7 @@ final class ModalViewModel: ObservableObject {
         case .result(let result):
             state = .result(
                 ResultDisplay(
-                    text: result.text.plainText,
+                    formatted: result.text,
                     sourceTag: result.detectedSource.displayTag,
                     targetTag: target.displayTag,
                     engineName: result.engine.displayName))
@@ -114,7 +114,7 @@ struct TranslationModalView: View {
             .padding(.vertical, 8)
         case .result(let result):
             ScrollView {
-                Text(result.text)
+                FormattedTextRenderer.text(result.formatted)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

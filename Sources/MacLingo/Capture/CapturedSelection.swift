@@ -7,16 +7,16 @@ enum CapturedRichKind: Sendable, Equatable {
 }
 
 /// A rich (formatted) payload captured from the pasteboard. The bytes are
-/// **untrusted** until they pass `MarkupSanitizer` at the `RichTextCodec` parse
-/// step (spec §5.4) — Phase 4.
+/// **untrusted** until they pass `MarkupSanitizer` at the `RichTextCodec.parse`
+/// step (spec §5.4).
 struct CapturedRich: Sendable, Equatable {
     let kind: CapturedRichKind
     let data: Data
 }
 
 /// The result of a capture (spec §4.3): always plain text, plus the richest
-/// representation that was available. Engine-agnostic; the codec turns `rich`
-/// into `FormattedText` in Phase 4.
+/// representation that was available. Engine-agnostic; `RichTextCodec.parse` turns
+/// `rich` into a sanitized `FormattedText`, falling back to `plainText` on failure.
 struct CapturedSelection: Sendable, Equatable {
     let plainText: String
     let rich: CapturedRich?

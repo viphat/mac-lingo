@@ -106,12 +106,17 @@ final class ModalController: NSObject, NSWindowDelegate {
 
     var isPinned: Bool { session.pinned }
 
-    // MARK: - Copy (Phase 3: plain text; rich RTF copy in Phase 4)
+    // MARK: - Copy (spec §3.4: sanitized RTF + plain-text fallback)
 
     private func copyActiveResult() {
         guard case .result(let result) = session.display else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
+        // Rich RTF first so a rich editor keeps the styling that survived
+        // validation; always write the plain-text fallback too.
+        if let rtf = FormattedTextRenderer.rtfData(result.text) {
+            pasteboard.setData(rtf, forType: .rtf)
+        }
         pasteboard.setString(result.text.plainText, forType: .string)
     }
 

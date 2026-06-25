@@ -120,6 +120,41 @@ final class GoogleFreeTests: XCTestCase {
         XCTAssertEqual(client.callCount, 2, "blank block issues no request")
     }
 
+    /// Echoes the request's `q` back as the translation, so sentinel tokens survive
+    /// the round-trip and styling is reattached (spec §3.4).
+    private final class EchoHTTPClient: HTTPClient, @unchecked Sendable {
+        func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            let url = try XCTUnwrap(request.url)
+            let query =
+                URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "q" }?.value ?? ""
+            // Embed the query as a JSON string the parser accepts (escaping specials).
+            let escaped = query.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let body = Data(#"[[["\#(escaped)","src"]],null,"en"]"#.utf8)
+            let response = try XCTUnwrap(
+                HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+            return (body, response)
+        }
+    }
+
+    func testProviderPreservesInlineStyleViaSentinelTokens() async throws {
+        let styled = FormattedText(blocks: [
+            FormattedText.Block(index: 0, runs: [InlineRun("hi "), InlineRun("there", style: .bold)])
+        ])
+        let provider = GoogleFreeProvider(client: EchoHTTPClient())
+        let request = TranslationRequest(
+            operationID: 1, selection: SelectionSnapshot(id: 1, source: styled),
+            engine: .googleFree, target: .vi)
+
+        let result = try await provider.translate(request)
+
+        XCTAssertEqual(result.text.plainText, "hi there")
+        let boldRun = result.text.blocks[0].runs.first { !$0.style.isEmpty }
+        XCTAssertEqual(boldRun?.text, "there")
+        XCTAssertEqual(boldRun?.style, .bold)
+    }
+
     func testProviderThrowsOnHTTPError() async {
         let client = StubHTTPClient(translated: "x", detected: "en", status: 400)
         let provider = GoogleFreeProvider(client: client, maxRetries: 0)

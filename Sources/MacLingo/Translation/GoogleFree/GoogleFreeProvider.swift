@@ -2,8 +2,9 @@ import Foundation
 
 /// Default engine (spec §6.1): the unofficial, key-free Google Free endpoint.
 /// Translates **block-by-block** and reassembles by block index (spec §3.4) —
-/// never by parsing the translated whitespace. Plain text only in Phase 3; inline
-/// styling via validated placeholder tokens lands in Phase 4.
+/// never by parsing the translated whitespace. Inline styling is carried through
+/// the plain-text endpoint as **validated sentinel tokens** (`RichTextCodec`); a
+/// block whose tokens don't round-trip cleanly degrades to plain-within-block.
 struct GoogleFreeProvider: TranslationService {
     let id: EngineID = .googleFree
 
@@ -35,16 +36,20 @@ struct GoogleFreeProvider: TranslationService {
             try Task.checkCancellation()
 
             // Whitespace-only / empty blocks: preserve verbatim, no request, no
-            // detection (excluded from language aggregation, §3.2).
+            // detection (excluded from language aggregation, §3.2). Block kind is
+            // carried through unchanged.
             if block.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                translatedBlocks.append(FormattedText.Block(index: block.index, text: block.text))
+                translatedBlocks.append(
+                    FormattedText.Block(index: block.index, runs: block.runs, kind: block.kind))
                 detections.append(LanguageAggregator.BlockDetection(sourceText: block.text, detected: nil))
                 continue
             }
 
-            let parsed = try await translateBlock(block.text, target: request.target)
-            translatedBlocks.append(
-                FormattedText.Block(index: block.index, text: parsed.translated))
+            // Carry inline styling through as sentinel tokens; on validation failure
+            // `decodeSentinel` degrades that block to plain-within-block (§3.4).
+            let encoded = RichTextCodec.encodeSentinel(block)
+            let parsed = try await translateBlock(encoded, target: request.target)
+            translatedBlocks.append(RichTextCodec.decodeSentinel(parsed.translated, original: block))
             detections.append(
                 LanguageAggregator.BlockDetection(
                     sourceText: block.text, detected: parsed.detectedSource))

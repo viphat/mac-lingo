@@ -20,17 +20,67 @@ enum DetectedLanguage: Sendable, Equatable {
     }
 }
 
-/// Engine-agnostic intermediate model (spec §5.2). Phase 3 carries **plain-text
-/// blocks only**; Phase 4 extends each block with inline runs and list metadata
-/// via `RichTextCodec`. Block order is the reassembly contract — never parse the
-/// translated whitespace (spec §3.4).
+/// Inline character styling preserved across translation (spec §5.2, §5.4). The
+/// allowlist is **exactly** {bold, italic, underline, code}; everything else is
+/// stripped at the `MarkupSanitizer` / `RichTextCodec` boundary.
+struct InlineStyle: OptionSet, Sendable, Hashable {
+    let rawValue: UInt8
+
+    static let bold = InlineStyle(rawValue: 1 << 0)
+    static let italic = InlineStyle(rawValue: 1 << 1)
+    static let underline = InlineStyle(rawValue: 1 << 2)
+    static let code = InlineStyle(rawValue: 1 << 3)
+}
+
+/// A maximal run of text sharing one inline style (spec §5.2). Styling is carried
+/// on the run, never reapplied by character offset (spec §3.4).
+struct InlineRun: Sendable, Equatable {
+    var text: String
+    var style: InlineStyle
+
+    init(_ text: String, style: InlineStyle = []) {
+        self.text = text
+        self.style = style
+    }
+}
+
+/// A block's structural role (spec §5.2). List items carry a nesting level and an
+/// ordered/unordered marker; the marker is rendered, never sent for translation.
+enum BlockKind: Sendable, Equatable {
+    case paragraph
+    case listItem(level: Int, ordered: Bool)
+}
+
+/// Engine-agnostic intermediate model (spec §5.2): an ordered list of blocks, each
+/// a sequence of styled inline runs. Block order is the reassembly contract — never
+/// parse the translated whitespace (spec §3.4). Built by `RichTextCodec` from
+/// sanitized RTF/HTML, or from plain text when no rich payload is available.
 struct FormattedText: Sendable, Equatable {
 
     /// One paragraph / list item. The `index` is stable and drives reassembly.
     struct Block: Sendable, Equatable, Identifiable {
         let index: Int
-        var text: String
+        var runs: [InlineRun]
+        var kind: BlockKind
         var id: Int { index }
+
+        init(index: Int, runs: [InlineRun], kind: BlockKind = .paragraph) {
+            self.index = index
+            self.runs = runs.isEmpty ? [InlineRun("")] : runs
+            self.kind = kind
+        }
+
+        /// Plain convenience: a single unstyled run.
+        init(index: Int, text: String, kind: BlockKind = .paragraph) {
+            self.init(index: index, runs: [InlineRun(text)], kind: kind)
+        }
+
+        /// Concatenated run text (no list marker).
+        var text: String { runs.map(\.text).joined() }
+
+        /// True when no run carries inline styling — the block can skip tagged
+        /// encoding and translate as plain text (spec §3.4).
+        var isPlain: Bool { runs.allSatisfy { $0.style.isEmpty } }
     }
 
     /// Blocks in reassembly order (sorted by `index`).
@@ -114,8 +164,10 @@ enum TranslationError: Error, Equatable {
 
 /// Version stamps that participate in the `CacheKey` (spec §5.1).
 enum TranslationVersioning {
-    /// Codec output shape. Phase 4 bumps this when the `RichTextCodec` changes.
-    static let codecVersion: UInt32 = 1
+    /// Codec output shape (the `RichTextCodec` encoding). Bumped to 2 in Phase 4
+    /// when blocks gained inline runs + list metadata, so any cached Phase 3
+    /// plain-text result misses (spec §3.1, §5.1).
+    static let codecVersion: UInt32 = 2
     /// AI prompt contract. Phase 5 owns bumping this.
     static let promptVersion: UInt32 = 1
 }

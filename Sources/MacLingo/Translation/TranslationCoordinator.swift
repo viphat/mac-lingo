@@ -47,10 +47,12 @@ final class TranslationCoordinator {
         let snapshot: SelectionSnapshot?
         if let captured, !captured.plainText.isEmpty {
             snapshotCounter += 1
-            // Phase 3: plain-text source. Phase 4 builds the rich `FormattedText`
-            // from `captured.rich` via `RichTextCodec`.
-            snapshot = SelectionSnapshot(
-                id: snapshotCounter, source: FormattedText(plainText: captured.plainText))
+            // Prefer the sanitized rich representation (spec §5.4 parse-step
+            // sanitization); fall back to plain text if there's no rich payload or
+            // it couldn't be safely parsed (§3.4 degrade-to-plain).
+            let source =
+                captured.rich.flatMap(RichTextCodec.parse) ?? FormattedText(plainText: captured.plainText)
+            snapshot = SelectionSnapshot(id: snapshotCounter, source: source)
         } else {
             snapshot = nil
         }
