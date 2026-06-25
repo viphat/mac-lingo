@@ -13,14 +13,21 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete        # Swift 6 strict concurrency (CLAUDE.md)
-    ARCHS: "$(ARCHS_STANDARD)"                 # universal (arm64 + x86_64)
-    ONLY_ACTIVE_ARCH: false
+    ARCHS: "$(ARCHS_STANDARD)"                 # universal slices available
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     ENABLE_HARDENED_RUNTIME: true
     CODE_SIGN_STYLE: Manual
     DEVELOPMENT_TEAM: ""                        # TODO: Developer ID team for signing
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
+  configs:
+    # Debug builds the active arch only (fast; sidesteps an Xcode universal +
+    # SwiftPM module bug). Release stays universal for distribution (verified at
+    # Phase 8 packaging).
+    Debug:
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      ONLY_ACTIVE_ARCH: NO
 
 packages:
   KeyboardShortcuts:
