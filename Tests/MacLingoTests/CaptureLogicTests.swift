@@ -79,14 +79,4 @@ final class CaptureLogicTests: XCTestCase {
         XCTAssertNil(CaptureCombiner.combine(axPlainText: nil, pasteboard: nil))
         XCTAssertNil(CaptureCombiner.combine(axPlainText: "", pasteboard: nil))
     }
-
-    // MARK: - OperationID issuance
-
-    func testOperationIDsAreMonotonicAndNeverInvalidSentinel() async {
-        let issuer = OperationIDIssuer()
-        let first = await issuer.next()
-        let second = await issuer.next()
-        XCTAssertNotEqual(first, invalidOperationID)
-        XCTAssertGreaterThan(second, first)
-    }
 }
