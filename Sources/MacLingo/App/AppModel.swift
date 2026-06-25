@@ -13,9 +13,19 @@ final class AppModel: ObservableObject {
     let loginItem: LoginItemController
     let reconciler: StateReconciler
 
+    /// Per-trigger operation identity issuer (spec §3.1, §5.3). An `OperationID` is
+    /// opened **before** capture; the full `RequestRegistry` is layered on in Phase 3.
+    let operationIDs = OperationIDIssuer()
+    /// Serialized, ownership-safe text capture (spec §4.3).
+    let capturer = SelectionCapturer()
+
     /// Result of the most recent launch migration, surfaced to the UI when the
     /// store had to be reset (spec §5.5).
     @Published private(set) var migrationOutcome: SettingsMigrationOutcome = .upToDate
+
+    /// In-flight capture/translate task. Re-triggering cancels it so a superseded
+    /// capture is discarded and its cleanup runs (spec §4.3, §5.3).
+    private var triggerTask: Task<Void, Never>?
 
     private let log = Logger(subsystem: "com.sharewis.maclingo", category: "AppModel")
 
@@ -45,13 +55,37 @@ final class AppModel: ObservableObject {
         permissions.recheck()
     }
 
-    /// Hotkey / menu entry point. Phase 2 adds capture + translation here.
+    /// Hotkey / menu entry point. Opens an `OperationID` *before* capture, runs the
+    /// serialized capture, and (Phase 2) logs a debug summary. Re-triggering cancels
+    /// any in-flight capture so it is superseded and discarded (spec §4.3, §5.3).
     func handleTranslateTrigger() {
         guard permissions.recheck() else {
             log.notice("translate trigger ignored: Accessibility not granted")
             return
         }
-        // TODO(Phase 2): open an OperationID, run capture, then translate + present.
+        let method = settings.captureMethod
+        triggerTask?.cancel()
+        triggerTask = Task { [weak self] in
+            guard let self else { return }
+            let operationID = await self.operationIDs.next()
+            let captured = await self.capturer.capture(method: method)
+            if Task.isCancelled { return }
+            self.reportCapture(operationID: operationID, captured: captured)
+        }
+    }
+
+    /// Phase 2 debug sink for a completed capture. Phase 3 replaces this with the
+    /// translation coordinator + modal presentation.
+    private func reportCapture(operationID: OperationID, captured: CapturedSelection?) {
+        guard let captured else {
+            log.notice("op \(operationID, privacy: .public): no text selected")
+            return
+        }
+        let hasRich = captured.rich != nil
+        let chars = captured.plainText.count
+        let summary = "op \(operationID): captured \(chars) chars, rich=\(hasRich)"
+        log.notice("\(summary, privacy: .public)")
+        // TODO(Phase 3): build SelectionSnapshot → translate → present modal.
     }
 
     /// Toggle launch-at-login with the atomic write contract (spec §5.5): apply the
