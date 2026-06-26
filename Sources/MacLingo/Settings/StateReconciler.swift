@@ -25,6 +25,7 @@ struct ReconciliationReport: Equatable, Sendable {
     var hasKeyCloudCorrected = false
     var defaultEngineCorrectedFrom: DefaultEngine?
     var defaultEngineCorrectedTo: DefaultEngine?
+    var autoEnhanceDisabled = false
     var notes: [String] = []
 }
 
@@ -61,8 +62,26 @@ final class StateReconciler {
         reconcileLoginItem(&report)
         reconcileKeychainFlags(&report)
         reconcileDefaultEngine(&report)
+        reconcileAutoEnhance(&report)
         if !report.notes.isEmpty {
             log.notice("Launch reconciliation made repairs: \(report.notes, privacy: .public)")
+        }
+        return report
+    }
+
+    /// Live (in-session) provider reconciliation (spec §5.5): a key/model/provider
+    /// change, a failed Validate, or a runtime 401/403. Re-derives the configured
+    /// set, repairs a stale default engine, and disables auto-enhance if its
+    /// provider is no longer valid. The caller bumps `providerConfigRevision`,
+    /// updates the service registry, and fans out to live panels.
+    @discardableResult
+    func reconcileProvidersLive() -> ReconciliationReport {
+        var report = ReconciliationReport()
+        reconcileKeychainFlags(&report)
+        reconcileDefaultEngine(&report)
+        reconcileAutoEnhance(&report)
+        if !report.notes.isEmpty {
+            log.notice("Live reconciliation made repairs: \(report.notes, privacy: .public)")
         }
         return report
     }
@@ -133,12 +152,19 @@ final class StateReconciler {
         report.notes.append("stale default engine \(preferred) cleared to \(corrected)")
     }
 
+    // MARK: - (e) Auto-enhance must have a valid AI provider (spec §5.5)
+
+    private func reconcileAutoEnhance(_ report: inout ReconciliationReport) {
+        guard settings.autoEnhance, currentConfiguration().aiProvider == nil else { return }
+        settings.autoEnhance = false
+        report.autoEnhanceDisabled = true
+        report.notes.append("auto-enhance disabled: no valid AI provider")
+    }
+
     /// Build the current configuration snapshot from settings + (already-reconciled)
-    /// Keychain flags. Google Free is always available until the Phase 7 kill switch.
+    /// Keychain flags + validity markers. Centralized in `SettingsStore` so every
+    /// resolution path agrees (spec §5.5/§6.1).
     private func currentConfiguration() -> ConfiguredEngines {
-        ConfiguredEngines(
-            googleFreeAvailable: true,
-            googleCloudConfigured: settings.googleCloudEnabled && settings.hasKeyCloud,
-            aiProvider: settings.hasKeyProvider ? settings.aiProvider : nil)
+        settings.configuredEngines
     }
 }

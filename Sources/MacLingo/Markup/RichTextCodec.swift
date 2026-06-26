@@ -186,28 +186,44 @@ enum RichTextCodec {
 
     /// Encode a block's runs as whitelisted HTML for an HTML-capable engine.
     static func encodeHTML(_ block: FormattedText.Block) -> String {
-        block.runs.filter { !$0.text.isEmpty }.map { run in
+        encodeHTML(runs: block.runs)
+    }
+
+    /// Encode an arbitrary run sequence (e.g. one chunk of an oversized block) as
+    /// whitelisted HTML. Plain runs are escaped; styled runs are tag-wrapped.
+    static func encodeHTML(runs: [InlineRun]) -> String {
+        runs.filter { !$0.text.isEmpty }.map { run in
             wrapHTML(escapeHTML(run.text), style: run.style)
         }
         .joined()
+    }
+
+    /// Decode translated HTML into styled runs (no block wrapping), validating the
+    /// allowlisted tags are balanced and well-nested. Returns `nil` on any
+    /// structural failure so the caller degrades that piece to plain text (§3.4).
+    static func decodeHTMLToRuns(_ translated: String) -> [InlineRun]? {
+        guard isWellFormedHTML(translated),
+            let parsed = MarkupSanitizer.formattedText(fromHTML: translated)
+        else { return nil }
+        return MarkupSanitizer.mergeAdjacent(parsed.blocks.flatMap(\.runs))
+    }
+
+    /// Plain-text fallback for a translated HTML piece that failed validation:
+    /// strip tags/entities so the styling is dropped but the text survives (§3.4).
+    static func plainFallback(_ translated: String) -> String {
+        MarkupSanitizer.formattedText(fromHTML: translated)?.plainText
+            ?? HTMLTokenizer.decodeEntities(translated)
     }
 
     /// Decode translated HTML back into a styled block. The markup must be
     /// structurally valid (balanced, well-nested allowlisted tags); otherwise the
     /// block degrades to plain text (spec §3.4).
     static func decodeHTML(_ translated: String, original: FormattedText.Block) -> FormattedText.Block {
-        guard isWellFormedHTML(translated),
-            let parsed = MarkupSanitizer.formattedText(fromHTML: translated)
-        else {
-            let plain =
-                MarkupSanitizer.formattedText(fromHTML: translated)?.plainText
-                ?? HTMLTokenizer.decodeEntities(translated)
-            return FormattedText.Block(index: original.index, runs: [InlineRun(plain)], kind: original.kind)
+        guard let runs = decodeHTMLToRuns(translated) else {
+            return FormattedText.Block(
+                index: original.index, runs: [InlineRun(plainFallback(translated))], kind: original.kind)
         }
-        // A single block is expected; flatten any stray block breaks into one.
-        let runs = parsed.blocks.flatMap(\.runs)
-        return FormattedText.Block(
-            index: original.index, runs: MarkupSanitizer.mergeAdjacent(runs), kind: original.kind)
+        return FormattedText.Block(index: original.index, runs: runs, kind: original.kind)
     }
 
     private static func wrapHTML(_ inner: String, style: InlineStyle) -> String {

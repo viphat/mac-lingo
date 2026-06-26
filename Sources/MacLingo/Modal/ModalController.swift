@@ -41,9 +41,19 @@ final class ModalController: NSObject, NSWindowDelegate {
         wireModelActions()
         session.onChange = { [weak self] display in
             guard let self else { return }
+            self.syncSelectors()
             self.model.apply(display, target: self.session.target)
         }
+        syncSelectors()
         model.apply(session.display, target: session.target)
+    }
+
+    /// Mirror the session's engine/target/available engines into the view model so
+    /// the selectors and Enhance button reflect the live state.
+    private func syncSelectors() {
+        model.currentEngine = session.engine
+        model.currentTarget = session.target
+        model.availableEngines = session.availableEngines
     }
 
     // MARK: - Setup
@@ -66,6 +76,11 @@ final class ModalController: NSObject, NSWindowDelegate {
         model.onRetry = { [weak self] in self?.session.retry() }
         model.onCopy = { [weak self] in self?.copyActiveResult() }
         model.onTogglePin = { [weak self] in self?.togglePin() }
+        model.onEnhance = { [weak self] in self?.enhance() }
+        model.onSwitchEngine = { [weak self] engine in self?.session.switchEngine(engine) }
+        model.onSwitchTarget = { [weak self] target in self?.session.switchTarget(target) }
+        model.onConfirmPaid = { [weak self] in self?.session.confirmPaidSend() }
+        model.onCancelPaid = { [weak self] in self?.session.cancelPaidSend() }
         model.onHoverChange = { [weak self] hovering in
             // Hover = key (spec §8): the panel becomes key (and receives Esc)
             // without activating the owning app.
@@ -76,12 +91,15 @@ final class ModalController: NSObject, NSWindowDelegate {
     // MARK: - Presentation
 
     /// Show (or re-anchor) the panel near `point`, then start/replace the session.
-    func present(at point: NSPoint, snapshot: SelectionSnapshot?, engine: EngineID, target: TargetLanguage) {
+    func present(at point: NSPoint, snapshot: SelectionSnapshot?, context: ModalPresenter.Context) {
         isClosing = false
         panel.orderFront(nil)
         position(near: point)
         installMouseMonitors()
-        session.begin(snapshot: snapshot, engine: engine, target: target)
+        session.begin(
+            snapshot: snapshot, engine: context.engine, target: context.target,
+            availableEngines: context.availableEngines, policy: context.policy,
+            providerConfigRevision: context.providerConfigRevision)
     }
 
     private func position(near point: NSPoint) {
@@ -105,6 +123,14 @@ final class ModalController: NSObject, NSWindowDelegate {
     }
 
     var isPinned: Bool { session.pinned }
+
+    /// Enhance with AI (spec §3.1): switch to the configured AI engine. The session
+    /// opens a new op on the same snapshot and pauses for paid confirmation if the
+    /// selection is over the threshold (spec §6.5).
+    private func enhance() {
+        guard let aiEngine = session.availableEngines.first(where: \.isAI) else { return }
+        session.switchEngine(aiEngine)
+    }
 
     // MARK: - Copy (spec §3.4: sanitized RTF + plain-text fallback)
 

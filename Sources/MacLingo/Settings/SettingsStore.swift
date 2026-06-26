@@ -50,13 +50,17 @@ final class SettingsStore: ObservableObject {
         static let launchAtLogin = "launchAtLogin"
         static let hasKeyProvider = "hasKeyProvider"
         static let hasKeyCloud = "hasKeyCloud"
+        static let aiKeyInvalid = "aiKeyInvalid"
+        static let cloudKeyInvalid = "cloudKeyInvalid"
+        static let providerConfigRevision = "providerConfigRevision"
 
         /// Every key this store owns — used for corruption backup and reset so we
         /// never touch unrelated keys in a shared suite.
         static let all: [String] = [
             schemaVersion, targetLanguage, defaultEngine, captureMethod, appearance,
             googleCloudEnabled, aiProvider, aiModel, autoEnhance, paidConfirmThreshold,
-            autoSpendLimit, launchAtLogin, hasKeyProvider, hasKeyCloud,
+            autoSpendLimit, launchAtLogin, hasKeyProvider, hasKeyCloud, aiKeyInvalid,
+            cloudKeyInvalid, providerConfigRevision,
         ]
     }
 
@@ -142,6 +146,49 @@ final class SettingsStore: ObservableObject {
     var hasKeyCloud: Bool {
         get { defaults.bool(forKey: Key.hasKeyCloud) }
         set { write(Key.hasKeyCloud, newValue) }
+    }
+
+    /// **Present but invalid** marker for the AI key (spec §5.5 "presence is not
+    /// validity"): set when Validate fails or a runtime 401/403 rejects the key, so
+    /// the provider is treated as unconfigured without deleting the user's key.
+    /// Cleared when a new key is stored or Validate succeeds.
+    var aiKeyInvalid: Bool {
+        get { defaults.bool(forKey: Key.aiKeyInvalid) }
+        set { write(Key.aiKeyInvalid, newValue) }
+    }
+
+    var cloudKeyInvalid: Bool {
+        get { defaults.bool(forKey: Key.cloudKeyInvalid) }
+        set { write(Key.cloudKeyInvalid, newValue) }
+    }
+
+    /// The current configured-engines snapshot (spec §5.5/§6.1) — the **single**
+    /// place "configured" is computed so launch reconciliation, live reconciliation,
+    /// trigger-time resolution, and the settings selector all agree. "Configured"
+    /// means present **and** not marked invalid; Google Free is always available
+    /// until the Phase 7 kill switch.
+    var configuredEngines: ConfiguredEngines {
+        ConfiguredEngines(
+            googleFreeAvailable: true,
+            googleCloudConfigured: googleCloudEnabled && hasKeyCloud && !cloudKeyInvalid,
+            aiProvider: (hasKeyProvider && !aiKeyInvalid) ? aiProvider : nil)
+    }
+
+    /// Monotonic provider-config revision (spec §5.1, §5.5). Part of the `CacheKey`:
+    /// any provider/model/key change (or a Free-endpoint switch) bumps it so
+    /// dependent cache entries become unreachable. Persisted so a relaunch never
+    /// reuses a revision an earlier session may have cached against.
+    var providerConfigRevision: UInt64 {
+        get { UInt64(bitPattern: Int64(defaults.integer(forKey: Key.providerConfigRevision))) }
+        set { write(Key.providerConfigRevision, Int64(bitPattern: newValue)) }
+    }
+
+    /// Bump and return the new provider-config revision (spec §5.5 live reconcile).
+    @discardableResult
+    func bumpProviderConfigRevision() -> UInt64 {
+        let next = providerConfigRevision &+ 1
+        providerConfigRevision = next
+        return next
     }
 
     // MARK: - Atomic system-state writes (spec §5.5)

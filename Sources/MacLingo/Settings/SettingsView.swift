@@ -10,6 +10,13 @@ struct SettingsView: View {
     @ObservedObject var permissions: PermissionsCoordinator
     let model: AppModel
 
+    /// Transient key entry — never persisted to Defaults; the key goes to Keychain
+    /// on Save and the field is cleared (spec §9).
+    @State private var apiKeyDraft = ""
+    @State private var aiModelDraft = ""
+    @State private var validationMessage: String?
+    @State private var isValidating = false
+
     var body: some View {
         Form {
             if case .resetToDefaults = model.migrationOutcome {
@@ -25,12 +32,16 @@ struct SettingsView: View {
 
             accessibilitySection
             generalSection
+            aiSection
             hotkeySection
             startupSection
         }
         .formStyle(.grouped)
         .frame(width: 460)
-        .onAppear { permissions.recheck() }
+        .onAppear {
+            permissions.recheck()
+            if aiModelDraft.isEmpty { aiModelDraft = settings.aiModel }
+        }
     }
 
     // MARK: - Sections
@@ -85,6 +96,70 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private var aiSection: some View {
+        Section("AI provider (BYOK)") {
+            Picker("Provider", selection: aiProviderBinding) {
+                ForEach(AIProvider.allCases, id: \.self) { provider in
+                    Text(provider.displayName).tag(provider)
+                }
+            }
+
+            TextField("Model", text: $aiModelDraft, prompt: Text(defaultModelPrompt))
+                .onSubmit { model.setAIModel(aiModelDraft) }
+
+            SecureField("API key", text: $apiKeyDraft, prompt: Text("Paste your key"))
+            HStack {
+                Button("Save key") {
+                    model.setAIKey(apiKeyDraft, provider: aiProviderBinding.wrappedValue)
+                    apiKeyDraft = ""
+                    validationMessage = nil
+                }
+                .disabled(apiKeyDraft.isEmpty)
+
+                Button("Validate") { validateKey() }
+                    .disabled(!settings.hasKeyProvider || isValidating)
+
+                if settings.hasKeyProvider {
+                    Button("Remove key", role: .destructive) {
+                        model.removeAIKey()
+                        validationMessage = nil
+                    }
+                }
+                if isValidating { ProgressView().controlSize(.small) }
+            }
+
+            keyStatus
+            if let validationMessage {
+                Text(validationMessage).font(.caption).foregroundStyle(.secondary)
+            }
+
+            Toggle("Auto-enhance with AI after a non-AI translation", isOn: $settings.autoEnhance)
+                .disabled(settings.configuredEngines.aiProvider == nil)
+
+            Stepper(
+                "Confirm paid translations over \(settings.paidConfirmThreshold) characters",
+                value: $settings.paidConfirmThreshold, in: 0...50_000, step: 500)
+
+            Stepper(
+                autoSpendLabel,
+                value: $settings.autoSpendLimit, in: 0...50_000, step: 500)
+        }
+    }
+
+    @ViewBuilder
+    private var keyStatus: some View {
+        if settings.aiKeyInvalid {
+            Label("Key was rejected — Validate or replace it.", systemImage: "xmark.circle.fill")
+                .foregroundStyle(.orange).font(.caption)
+        } else if settings.hasKeyProvider {
+            Label("Key stored in Keychain.", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green).font(.caption)
+        } else {
+            Text("No key stored. Paste one and Save.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
     private var hotkeySection: some View {
         Section("Hotkey") {
             KeyboardShortcuts.Recorder("Translate selection:", name: .translateSelection)
@@ -104,15 +179,46 @@ struct SettingsView: View {
 
     // MARK: - Derived
 
-    /// Only offer engines that are currently configured (spec §7). Google Free is
-    /// always available; Cloud/AI appear once their keys are present (Phases 5–6).
+    /// Only offer engines that are currently configured (spec §7). Centralized via
+    /// `SettingsStore.configuredEngines` so the selector agrees with resolution.
     private var availableDefaultEngines: [DefaultEngine] {
-        let configured = ConfiguredEngines(
-            googleFreeAvailable: true,
-            googleCloudConfigured: settings.googleCloudEnabled && settings.hasKeyCloud,
-            aiProvider: settings.hasKeyProvider ? settings.aiProvider : nil)
+        let configured = settings.configuredEngines
         return DefaultEngine.allCases.filter {
             EngineResolver.isAvailable($0, available: configured)
+        }
+    }
+
+    private var aiProviderBinding: Binding<AIProvider> {
+        Binding(
+            get: { settings.aiProvider ?? .openAI },
+            set: { newValue in
+                settings.aiProvider = newValue
+                aiModelDraft = settings.aiModel
+                model.onProviderChanged()
+            })
+    }
+
+    private var defaultModelPrompt: String {
+        (settings.aiProvider ?? .openAI).defaultModel
+    }
+
+    private var autoSpendLabel: String {
+        settings.autoSpendLimit == 0
+            ? "Auto-spend: always confirm over threshold"
+            : "Auto-spend up to \(settings.autoSpendLimit) characters without confirming"
+    }
+
+    private func validateKey() {
+        isValidating = true
+        validationMessage = nil
+        Task {
+            let result = await model.validateAIKey()
+            isValidating = false
+            switch result {
+            case .valid: validationMessage = "Key is valid."
+            case .invalidKey: validationMessage = "Key was rejected (401/403)."
+            case .failed(let reason): validationMessage = "Couldn’t validate: \(reason)"
+            }
         }
     }
 }

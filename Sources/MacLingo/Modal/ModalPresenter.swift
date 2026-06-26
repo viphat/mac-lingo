@@ -2,43 +2,69 @@ import AppKit
 
 /// Manages the modal panels and the retrigger policy (spec §3.1): there is at most
 /// **one transient (unpinned) panel**, reused by each new trigger; **pinned panels
-/// accumulate** as independent windows until the user closes them.
+/// accumulate** as independent windows until the user closes them. Also fans out
+/// live provider reconciliation to every open panel (spec §5.5).
 @MainActor
 final class ModalPresenter {
 
-    private let services: TranslationServiceProviding
-    private let providerConfigRevision: UInt64
+    /// What an engine/target/policy presentation needs beyond the snapshot.
+    struct Context {
+        let engine: EngineID
+        let target: TargetLanguage
+        let availableEngines: [EngineID]
+        let policy: SendPolicy
+        let providerConfigRevision: UInt64
+    }
 
-    /// All live controllers (for cleanup bookkeeping).
+    private let services: TranslationServiceProviding
+
+    /// Invoked when any panel's paid engine rejects the key (spec §5.5).
+    var onProviderUnauthorized: ((EngineID) -> Void)?
+
+    /// All live controllers (for cleanup + live reconciliation fan-out).
     private var controllers: [ModalController] = []
     /// The single reusable transient panel, if one is currently open and unpinned.
     private weak var transient: ModalController?
 
-    init(services: TranslationServiceProviding, providerConfigRevision: UInt64 = 0) {
+    init(services: TranslationServiceProviding) {
         self.services = services
-        self.providerConfigRevision = providerConfigRevision
     }
 
     /// Present a capture result. Reuses the transient panel if one exists
     /// (re-anchoring at `point` and restarting its session); otherwise opens a new
     /// transient panel. Pinned panels are left untouched (spec §3.1).
-    func present(
-        snapshot: SelectionSnapshot?, engine: EngineID, target: TargetLanguage, at point: NSPoint
-    ) {
+    func present(snapshot: SelectionSnapshot?, context: Context, at point: NSPoint) {
         if let transient {
-            transient.present(at: point, snapshot: snapshot, engine: engine, target: target)
+            transient.present(at: point, snapshot: snapshot, context: context)
             return
         }
-        let controller = makeController(engine: engine, target: target)
+        let controller = makeController(context: context)
         controllers.append(controller)
         transient = controller
-        controller.present(at: point, snapshot: snapshot, engine: engine, target: target)
+        controller.present(at: point, snapshot: snapshot, context: context)
     }
 
-    private func makeController(engine: EngineID, target: TargetLanguage) -> ModalController {
+    /// Apply a live provider change to every open panel (spec §5.5). New panels
+    /// pick up the change via the next `present` (the coordinator passes the new
+    /// revision in the context); existing panels reconcile in place.
+    func reconcileProviders(
+        revision: UInt64, availableEngines: [EngineID], resolve: (EngineID) -> EngineID
+    ) {
+        for controller in controllers {
+            let resolved = resolve(controller.session.engine)
+            controller.session.reconcile(
+                revision: revision, availableEngines: availableEngines, resolvedEngine: resolved)
+        }
+    }
+
+    private func makeController(context: Context) -> ModalController {
         let session = PanelSession(
-            services: services, engine: engine, target: target,
-            providerConfigRevision: providerConfigRevision)
+            services: services, engine: context.engine, target: context.target,
+            providerConfigRevision: context.providerConfigRevision,
+            availableEngines: context.availableEngines, policy: context.policy)
+        session.onProviderUnauthorized = { [weak self] engine in
+            self?.onProviderUnauthorized?(engine)
+        }
         let controller = ModalController(session: session)
         controller.onClosed = { [weak self] closed in self?.handleClosed(closed) }
         controller.onPinnedChange = { [weak self] changed, pinned in

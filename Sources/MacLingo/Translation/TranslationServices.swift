@@ -1,33 +1,81 @@
 import Foundation
 
-/// Maps an `EngineID` to a concrete `TranslationService` (spec §5.1). Phase 3
-/// implements Google Free only; Google Cloud and the AI providers arrive in
-/// Phases 5–6 and return `nil` until then (the session surfaces
-/// `providerUnavailable`).
+/// Maps an `EngineID` to a concrete `TranslationService` (spec §5.1).
 protocol TranslationServiceProviding: Sendable {
     func service(for engine: EngineID) -> TranslationService?
 }
 
-/// Default factory. The Google Free endpoint is injected (Phase 7 remote config
-/// can switch it among allowlisted hosts); the HTTP client is injected for tests.
-struct DefaultTranslationServices: TranslationServiceProviding {
+/// Runtime configuration for the active BYOK AI engine (spec §6.4): which provider,
+/// which (editable) model, and the key read from the Keychain. Rebuilt by live
+/// reconciliation whenever the provider/model/key changes; `nil` when no AI engine
+/// is configured. The key is held in memory only while a provider is active and is
+/// **never** logged (spec §9).
+struct AIRuntimeConfig: Sendable, Equatable {
+    let engineID: EngineID
+    let model: String
+    let apiKey: String
+}
+
+/// Factory mapping `EngineID` → live `TranslationService`, with a mutable AI
+/// configuration so a mid-session key/model/provider change takes effect on the
+/// next request (paired with a `providerConfigRevision` bump that misses the cache,
+/// spec §5.5). Reference type + lock so it can be updated off the call that issues
+/// requests; the AI key lives only here in memory.
+final class TranslationServiceRegistry: TranslationServiceProviding, @unchecked Sendable {
+    private let lock = NSLock()
     private let httpClient: HTTPClient
-    private let googleFreeEndpoint: String
+    private var googleFreeEndpoint: String
+    private var googleFreeAvailable: Bool
+    private var aiConfig: AIRuntimeConfig?
 
     init(
         httpClient: HTTPClient = URLSessionHTTPClient(),
-        googleFreeEndpoint: String = TrustMaterial.defaultGoogleFreeEndpoint
+        googleFreeEndpoint: String = TrustMaterial.defaultGoogleFreeEndpoint,
+        googleFreeAvailable: Bool = true,
+        aiConfig: AIRuntimeConfig? = nil
     ) {
         self.httpClient = httpClient
         self.googleFreeEndpoint = googleFreeEndpoint
+        self.googleFreeAvailable = googleFreeAvailable
+        self.aiConfig = aiConfig
+    }
+
+    /// Replace the active AI configuration (live reconciliation, spec §5.5). Pass
+    /// `nil` to drop AI (key removed / provider invalid).
+    func updateAIConfig(_ config: AIRuntimeConfig?) {
+        lock.withLock { aiConfig = config }
+    }
+
+    /// Switch the Google Free endpoint among allowlisted hosts (Phase 7 remote
+    /// config). Disable the Free provider with `available: false`.
+    func updateGoogleFree(endpoint: String? = nil, available: Bool? = nil) {
+        lock.withLock {
+            if let endpoint { googleFreeEndpoint = endpoint }
+            if let available { googleFreeAvailable = available }
+        }
     }
 
     func service(for engine: EngineID) -> TranslationService? {
+        let (endpoint, freeOn, ai) = lock.withLock {
+            (googleFreeEndpoint, googleFreeAvailable, aiConfig)
+        }
         switch engine {
         case .googleFree:
-            GoogleFreeProvider(endpoint: googleFreeEndpoint, client: httpClient)
-        case .googleCloud, .openAI, .deepSeek:
-            nil  // Phases 5 (AI) / 6 (Cloud)
+            return freeOn ? GoogleFreeProvider(endpoint: endpoint, client: httpClient) : nil
+        case .openAI, .deepSeek:
+            guard let ai, ai.engineID == engine else { return nil }
+            switch engine {
+            case .openAI:
+                return OpenAICompatibleProvider.openAI(
+                    model: ai.model, apiKey: ai.apiKey, client: httpClient)
+            case .deepSeek:
+                return OpenAICompatibleProvider.deepSeek(
+                    model: ai.model, apiKey: ai.apiKey, client: httpClient)
+            default:
+                return nil
+            }
+        case .googleCloud:
+            return nil  // Phase 6
         }
     }
 }

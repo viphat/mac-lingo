@@ -28,8 +28,7 @@ final class TranslationCoordinator {
     /// the main actor, then captures off-actor and presents.
     func handleTrigger() {
         let method = settings.captureMethod
-        let target = settings.targetLanguage
-        let engine = resolveEngine()
+        let context = makeContext()
         let point = NSEvent.mouseLocation
 
         captureTask?.cancel()
@@ -37,12 +36,12 @@ final class TranslationCoordinator {
             guard let self else { return }
             let captured = await self.capturer.capture(method: method)
             if Task.isCancelled { return }
-            self.present(captured: captured, engine: engine, target: target, at: point)
+            self.present(captured: captured, context: context, at: point)
         }
     }
 
     private func present(
-        captured: CapturedSelection?, engine: EngineID, target: TargetLanguage, at point: NSPoint
+        captured: CapturedSelection?, context: ModalPresenter.Context, at point: NSPoint
     ) {
         let snapshot: SelectionSnapshot?
         if let captured, !captured.plainText.isEmpty {
@@ -56,16 +55,40 @@ final class TranslationCoordinator {
         } else {
             snapshot = nil
         }
-        presenter.present(snapshot: snapshot, engine: engine, target: target, at: point)
+        presenter.present(snapshot: snapshot, context: context, at: point)
     }
 
-    /// Resolve the engine to use via the fallback chain (spec §6.1). Phase 3 only
-    /// implements Google Free; Cloud/AI configuration arrives in Phases 5–6.
-    private func resolveEngine() -> EngineID {
-        let available = ConfiguredEngines(
-            googleFreeAvailable: true,
-            googleCloudConfigured: false,
-            aiProvider: nil)
-        return EngineResolver.resolve(preferred: settings.defaultEngine, available: available)
+    /// Build the presentation context from current settings: the resolved engine
+    /// (spec §6.1 fallback chain), the configured engine selector list, the
+    /// spend/size policy (spec §6.5), and the current provider-config revision.
+    private func makeContext() -> ModalPresenter.Context {
+        let configured = settings.configuredEngines
+        let engine = EngineResolver.resolve(preferred: settings.defaultEngine, available: configured)
+        let available = Self.availableEngines(configured)
+
+        // Auto-enhance (spec §3.1): only after a non-AI default, only if an AI
+        // engine is configured — a no-op (nil) otherwise.
+        let aiEngine = configured.aiProvider?.engineID
+        let autoEnhanceEngine: EngineID? =
+            (settings.autoEnhance && !engine.isAI) ? aiEngine : nil
+
+        let policy = SendPolicy(
+            paidConfirmThreshold: settings.paidConfirmThreshold,
+            autoSpendLimit: settings.autoSpendLimit,
+            autoEnhance: settings.autoEnhance,
+            autoEnhanceEngine: autoEnhanceEngine)
+
+        return ModalPresenter.Context(
+            engine: engine, target: settings.targetLanguage, availableEngines: available,
+            policy: policy, providerConfigRevision: settings.providerConfigRevision)
+    }
+
+    /// Concrete engines the modal may switch among, given what's configured.
+    static func availableEngines(_ configured: ConfiguredEngines) -> [EngineID] {
+        var engines: [EngineID] = []
+        if configured.googleFreeAvailable { engines.append(.googleFree) }
+        if configured.googleCloudConfigured { engines.append(.googleCloud) }
+        if let ai = configured.aiProvider?.engineID { engines.append(ai) }
+        return engines
     }
 }

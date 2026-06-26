@@ -160,6 +160,11 @@ enum TranslationError: Error, Equatable {
     case providerUnavailable
     /// Nothing to translate.
     case emptySelection
+    /// A paid engine rejected the key (HTTP 401/403). Marks the provider
+    /// **unconfigured** and triggers live reconciliation (spec §5.5, §6.2).
+    case unauthorized
+    /// The selection exceeds the hard cap; refused before any send (spec §6.5).
+    case selectionTooLarge(limit: Int)
 }
 
 /// Version stamps that participate in the `CacheKey` (spec §5.1).

@@ -3,7 +3,7 @@
 Running progress tracker for the phased build (`docs/MacLingo-plan.md`).
 Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.md`.
 
-**Last updated:** 2026-06-25
+**Last updated:** 2026-06-26
 
 ---
 
@@ -16,14 +16,14 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 | 2 | Hotkey + text capture | 🚧 Code complete — actor + wiring done; on-device QA pending |
 | 3 | Translation service + Google Free + modal (plain text) | 🚧 Code complete — pipeline + modal done; on-device QA pending |
 | 4 | Formatting preservation + markup trust boundary | 🚧 Code complete — codec + sanitizer + rich modal/copy done; on-device QA pending |
-| 5 | AI providers (BYOK) + Keychain + live reconciliation | ⛔ Not started |
+| 5 | AI providers (BYOK) + Keychain + live reconciliation | 🚧 Code complete — providers + paid-gate + live reconcile + UI; on-device QA pending |
 | 6 | Google Cloud provider | ⛔ Not started |
 | 7 | Networking trust boundary, remote config & hardening | ⛔ Not started |
 | 8 | Packaging & release | ⛔ Not started |
 
 **Toolchain:** Xcode 26.5, macOS 26.5 SDK, Swift 6 strict concurrency.
 **Build verified:** `xcodebuild` BUILD + TEST SUCCEEDED; `swiftlint --strict` and
-`swift-format --strict` clean. **100 unit tests passing.**
+`swift-format --strict` clean. **133 unit tests passing.**
 
 ---
 
@@ -162,6 +162,60 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
   degrade-to-plain on missing/duplicate/unbalanced/misnested markers), `GoogleFreeTests`
   (+1 end-to-end sentinel round-trip over an echo client). **100 tests total.**
 
+### Phase 5 — AI providers (BYOK) + Keychain + live reconciliation (code complete) 🚧
+- **AI providers (`Translation/AI/`):** `OpenAICompatibleProvider` backs both OpenAI
+  (`api.openai.com/v1`) and DeepSeek (`api.deepseek.com`) — `static openAI`/`deepSeek`
+  factories differ only in base URL/model/`EngineID`. `AIChatEndpoint` builds
+  `POST /chat/completions` (key in `Authorization: Bearer`, **never** the URL;
+  translation-data host-allowlist guard; `redactedDescription` for logs, spec §9);
+  `AIChatResponseParser` reads `choices[0].message.content`; `AIPrompt` is the shared
+  whitelisted-HTML round-trip contract (carries `promptVersion`). Block-by-block,
+  reassembled by index; HTML tags round-trip via `RichTextCodec.encodeHTML(runs:)` /
+  `decodeHTMLToRuns` → sanitize + structural validation → degrade-to-plain per chunk.
+  AI detection is unavailable (returns only HTML) → `detectedSource = .unknown`.
+  **401/403 → `.unauthorized`** (not retried).
+- **Large-selection chunking (`SelectionChunker` + `EncodedSize`):** primary split on
+  block boundaries (provider loop); a single oversized block splits sentence → word →
+  grapheme against the **encoded** budget (tokens for AI / UTF-8 bytes available for
+  Free). Contiguous-slice pieces reassemble **exactly**; the provider re-attaches each
+  chunk's source edge-whitespace (the HTML tokenizer trims fragment edges) so seams
+  don't fuse words (§6.5 line-break safety). Pure + tested.
+- **Send-boundary gate (`SendPolicy` + `PanelSession`):** entry-point-agnostic
+  **paid confirmation** (`.confirmPaid` display + `confirmPaidSend`/`cancelPaidSend`)
+  guards *every* paid cache-miss send (first op, Enhance, engine/target switch, retry,
+  auto-enhance); cache **hits** are exempt (served before the gate). **Hard cap**
+  (20,000 chars → `.selectionTooLarge`, refused before any send). **Auto-enhance**:
+  one AI pass after a non-AI default, **no-op when default is AI** (coordinator leaves
+  `autoEnhanceEngine` nil), **pauses for confirmation** over threshold (never silently
+  spends). Declining a confirmation restores the last applied engine/target/result.
+- **Live reconciliation (spec §5.5):** `SettingsStore.providerConfigRevision`
+  (persisted, monotonic, `bumpProviderConfigRevision`) + `aiKeyInvalid`/`cloudKeyInvalid`
+  ("present is not valid") + centralized `configuredEngines`. `StateReconciler`
+  `.reconcileProvidersLive()` repairs hasKey flags, stale default, and disables
+  auto-enhance without a valid provider. `AppModel.reconcileProvidersLive()` refreshes
+  the registry's AI config, bumps the revision, and fans out via
+  `ModalPresenter.reconcileProviders` → `PanelSession.reconcile` (invalidate cache,
+  cancel in-flight, re-resolve invalid engine; **pinned panels retain their result**).
+  A runtime 401/403 propagates `PanelSession.onProviderUnauthorized` → presenter →
+  `AppModel` → marks the key invalid + live-reconciles.
+- **Service registry (`TranslationServiceRegistry`):** replaces the Phase 3 struct;
+  mutable AI config under a lock (key in memory only), built per request so a live
+  key/model/provider change takes effect on the next op. Wired into `AppModel`.
+- **Modal UI:** engine selector + target switcher (menus), **Enhance with AI** button,
+  and the paid-confirmation pane (Translate / Cancel) in `TranslationModalView`;
+  `ModalController` keeps the selectors in sync and routes actions to the session.
+- **Settings UI:** AI provider picker, **editable model** field, `SecureField` key
+  entry (never persisted to Defaults; goes to Keychain on Save), **Validate** (minimal
+  request; 401 → invalid), Remove key, auto-enhance toggle, paid-confirm threshold +
+  auto-spend steppers, live key status.
+- **Tests (+33):** `AIProviderTests` (10), `SelectionChunkerTests` (6),
+  `SendPolicyTests` (4), `PanelSessionPaidTests` (11 — hard cap, paid pause/confirm/
+  cancel-revert, free-exempt, cache-hit-exempt, auto-enhance run/no-op/pause, live
+  reconcile re-resolve/revision/pinned-retain), `StateReconcilerTests` (+2 live +1
+  present-not-valid). **133 tests total.**
+- **Deferred by design:** Google Cloud provider (Phase 6, shares the paid-gate +
+  reconciliation hooks); networking redirect/allowlist hardening (Phase 7).
+
 ---
 
 ## Next steps (checklist)
@@ -203,12 +257,14 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 - [ ] **On-device QA** (manual; styled selections in real apps + rich-paste) → Human tasks.
 
 ### Phase 5 — AI providers (BYOK) + live reconciliation
-- [ ] OpenAI + DeepSeek providers (shared HTML round-trip prompt, `promptVersion`).
-- [ ] Settings: provider/model (editable list)/key + **Validate**, auto-enhance,
+- [x] OpenAI + DeepSeek providers (shared HTML round-trip prompt, `promptVersion`).
+- [x] Settings: provider/model (editable list)/key + **Validate**, auto-enhance,
       paid-confirm threshold, auto-spend policy.
-- [ ] Entry-point-agnostic **paid confirmation** at the send boundary; auto-enhance rules.
-- [ ] Key validity (not just presence); live reconciliation + `providerConfigRevision`.
-- [ ] Large-selection chunking (block → sentence → word → grapheme; encoded budget).
+- [x] Entry-point-agnostic **paid confirmation** at the send boundary; auto-enhance rules.
+- [x] Key validity (not just presence); live reconciliation + `providerConfigRevision`.
+- [x] Large-selection chunking (block → sentence → word → grapheme; encoded budget).
+- [x] Build + lint clean; tests pass. **Commit Phase 5.**
+- [ ] **On-device QA** (manual; real key, Enhance toggle, over-threshold confirm) → Human tasks.
 
 ### Phase 6 — Google Cloud (v2 + `X-Goog-Api-Key` header)
 - [ ] `GoogleCloudProvider`, settings toggle + key + Validate; paid-confirm + reconciliation.

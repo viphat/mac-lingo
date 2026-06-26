@@ -93,4 +93,50 @@ final class StateReconcilerTests: XCTestCase {
         XCTAssertEqual(store.defaultEngine, .aiProvider)
         XCTAssertNil(report.defaultEngineCorrectedFrom)
     }
+
+    // MARK: - Presence is not validity (spec §5.5)
+
+    func testInvalidKeyTreatedAsUnconfigured() {
+        let store = makeIsolatedStore().store
+        store.defaultEngine = .aiProvider
+        store.aiProvider = .openAI
+        store.hasKeyProvider = true
+        store.aiKeyInvalid = true  // present, but rejected
+        let keychain = MockKeychain(present: [.aiProvider])
+
+        let report = reconciler(store: store, keychain: keychain, loginItem: MockLoginItem(enabled: false))
+            .reconcileAtLaunch()
+
+        // An invalid key is not "configured": the default falls back to Google Free.
+        XCTAssertEqual(store.defaultEngine, .googleFree)
+        XCTAssertEqual(report.defaultEngineCorrectedTo, .googleFree)
+    }
+
+    // MARK: - Live provider reconciliation (spec §5.5)
+
+    func testLiveReconcileDisablesAutoEnhanceWithoutValidProvider() {
+        let store = makeIsolatedStore().store
+        store.autoEnhance = true  // but no AI provider configured
+        store.aiProvider = nil
+
+        let report = reconciler(store: store, loginItem: MockLoginItem(enabled: false))
+            .reconcileProvidersLive()
+
+        XCTAssertFalse(store.autoEnhance)
+        XCTAssertTrue(report.autoEnhanceDisabled)
+    }
+
+    func testLiveReconcileKeepsAutoEnhanceWithValidProvider() {
+        let store = makeIsolatedStore().store
+        store.autoEnhance = true
+        store.aiProvider = .deepSeek
+        store.hasKeyProvider = true
+        let keychain = MockKeychain(present: [.aiProvider])  // key actually present
+
+        let report = reconciler(store: store, keychain: keychain, loginItem: MockLoginItem(enabled: false))
+            .reconcileProvidersLive()
+
+        XCTAssertTrue(store.autoEnhance)
+        XCTAssertFalse(report.autoEnhanceDisabled)
+    }
 }
