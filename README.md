@@ -59,10 +59,26 @@ Accessibility permission is required at runtime — grant it to the build in
 *System Settings → Privacy & Security → Accessibility* (re-grant after a
 significant rebuild if macOS drops the entitlement).
 
-## Security note
+## Security & privacy
+
+Selected text is sent **only** to the translation engine you use (the
+translation-data allowlist); control-plane hosts (signed remote config + Sparkle
+updates) are a **separate** allowlist and never receive your text. Every HTTP
+redirect is validated before it's followed, and the body + credentials are dropped
+on any host change. Captured/translated HTML and RTF are sanitized — no remote
+resources ever load. There is **no analytics and no telemetry**; availability of
+the free endpoint is monitored on-device only. See
+[`docs/PRIVACY.md`](docs/PRIVACY.md) for the full statement.
 
 Never commit signing identities, API keys, the Sparkle EdDSA private key, or the
 remote-config private keys. See the invariants in [`CLAUDE.md`](CLAUDE.md) — this
 app touches the clipboard, synthesizes keystrokes, reads the Accessibility API,
 and sends user-selected text over the network; correctness and safety there are
 the whole game.
+
+## Releasing
+
+Cutting a notarized `.dmg` with signed Sparkle updates is documented in
+[`docs/RELEASE.md`](docs/RELEASE.md) (signing, notarization, signed appcast + feed,
+config-epoch procedure, and the spec §12 acceptance-matrix gate). User-visible
+changes are tracked in [`CHANGELOG.md`](CHANGELOG.md).

@@ -55,7 +55,18 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSHumanReadableCopyright: "© 2026 ShareWis"
-        # Sparkle keys filled in at Phase 8 (SUFeedURL, SUPublicEDKey).
+        # Sparkle update trust (spec §10). The appcast host is a control-plane host
+        # (§9) and never receives selected text. `SURequireSignedFeed` protects the
+        # feed metadata as well as each archive; signatures are verified before
+        # extraction. `SUPublicEDKey` is the embedded EdDSA public key.
+        # TODO(release): set the real appcast URL and paste the EdDSA public key
+        # before notarizing (see docs/RELEASE.md). Placeholders are intentional so a
+        # dev build never reaches a real update server.
+        SUFeedURL: "https://updates.maclingo.invalid/appcast.xml"
+        SUPublicEDKey: ""
+        SURequireSignedFeed: true
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
     entitlements:
       path: Sources/MacLingo/Resources/MacLingo.entitlements
       properties:

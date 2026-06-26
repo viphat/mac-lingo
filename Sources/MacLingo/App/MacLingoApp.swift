@@ -21,6 +21,10 @@ struct MacLingoApp: App {
             }
             .keyboardShortcut(",", modifiers: .command)
 
+            Button("Check for Updates…") {
+                model.checkForUpdates()
+            }
+
             Divider()
 
             Button("Quit MacLingo") {

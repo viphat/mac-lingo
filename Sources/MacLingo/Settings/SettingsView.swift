@@ -23,6 +23,10 @@ struct SettingsView: View {
     @State private var cloudValidationMessage: String?
     @State private var isValidatingCloud = false
 
+    /// Local-only availability snapshot (spec §6.1/§9) — loaded from the on-device
+    /// monitor; never sent anywhere.
+    @State private var availabilitySnapshot = "No translations yet."
+
     var body: some View {
         Form {
             if case .resetToDefaults = model.migrationOutcome {
@@ -42,12 +46,15 @@ struct SettingsView: View {
             cloudSection
             hotkeySection
             startupSection
+            diagnosticsSection
+            updatesSection
         }
         .formStyle(.grouped)
         .frame(width: 460)
         .onAppear {
             permissions.recheck()
             if aiModelDraft.isEmpty { aiModelDraft = settings.aiModel }
+            Task { availabilitySnapshot = await model.availabilityMonitor.snapshot }
         }
     }
 
@@ -238,6 +245,37 @@ struct SettingsView: View {
                 isOn: Binding(
                     get: { settings.launchAtLogin },
                     set: { model.setLaunchAtLogin($0) }))
+        }
+    }
+
+    @ViewBuilder
+    private var diagnosticsSection: some View {
+        Section("Diagnostics") {
+            if !settings.googleFreeAvailable {
+                Label(
+                    "Google Translate (free) is currently disabled by a signed config. "
+                        + "MacLingo falls back to your AI or Cloud engine.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .foregroundStyle(.orange).font(.caption)
+            }
+            Text(availabilitySnapshot)
+                .font(.caption).foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Button("Refresh") {
+                Task { availabilitySnapshot = await model.availabilityMonitor.snapshot }
+            }
+            Text("Availability is tracked on-device only. No analytics or telemetry is sent.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var updatesSection: some View {
+        Section("Updates") {
+            Button("Check for Updates…") { model.checkForUpdates() }
+            Text("Updates are EdDSA-signed and verified before install (Sparkle).")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

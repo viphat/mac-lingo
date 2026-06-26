@@ -32,6 +32,27 @@ enum TrustMaterial {
         sparkleAppcastHost,
     ]
 
+    /// Which network allowlist a host belongs to (spec §9). The two lists are
+    /// **never merged**: a redirect may only stay within the *same* list, and
+    /// `.none` hosts are never contacted.
+    enum NetworkAllowlist: Equatable, Sendable {
+        case translationData
+        case controlPlane
+        case none
+    }
+
+    /// Classify `host` into its allowlist. Used by ``RedirectValidator`` to decide
+    /// whether a 3xx may be followed and by the fetchers to assert a request never
+    /// targets the wrong plane.
+    static func allowlist(for host: String) -> NetworkAllowlist {
+        // DNS is case-insensitive — normalize so a cosmetic case change can't be
+        // used to dodge the allowlist (or be misread as off-allowlist).
+        let normalized = host.lowercased()
+        if translationDataHosts.contains(normalized) { return .translationData }
+        if controlPlaneHosts.contains(normalized) { return .controlPlane }
+        return .none
+    }
+
     // MARK: - Google Free endpoint (spec §6.1)
 
     /// Compiled-default Google Free endpoint, used unless a higher-version signed
@@ -44,6 +65,13 @@ enum TrustMaterial {
     static let googleFreeEndpointAllowlist: Set<String> = [
         "translate.googleapis.com"
     ]
+
+    /// Build the Free endpoint URL string for an allowlisted `host` (the path is
+    /// the same across Google hosts). Callers must only pass a host that came from a
+    /// verified config (already checked against ``googleFreeEndpointAllowlist``).
+    static func googleFreeEndpoint(forHost host: String) -> String {
+        "https://\(host)/translate_a/single"
+    }
 
     // MARK: - Remote config trust (spec §6.1, §10)
 

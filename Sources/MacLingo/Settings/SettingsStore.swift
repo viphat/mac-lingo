@@ -28,6 +28,20 @@ final class SettingsStore: ObservableObject {
     /// (surfaced to the user as an actionable notice — spec §5.5).
     private(set) var didResetDueToCorruption = false
 
+    /// In-memory Google Free availability driven by the remote-config kill switch
+    /// (spec §6.1). **Not persisted here** — the authoritative, fail-closed state
+    /// lives in `RemoteConfigStore`; this mirror keeps `configuredEngines` the single
+    /// place "configured" is computed. A relaunch re-derives it from the persisted
+    /// config state via `RemoteConfigCoordinator` before any trigger.
+    private var freeProviderAvailable = true
+    var googleFreeAvailable: Bool {
+        get { freeProviderAvailable }
+        set {
+            objectWillChange.send()
+            freeProviderAvailable = newValue
+        }
+    }
+
     init(defaults: UserDefaults = .standard, backupDirectory: URL? = nil) {
         self.defaults = defaults
         self.backupDirectory = backupDirectory ?? Self.defaultBackupDirectory
@@ -169,7 +183,7 @@ final class SettingsStore: ObservableObject {
     /// until the Phase 7 kill switch.
     var configuredEngines: ConfiguredEngines {
         ConfiguredEngines(
-            googleFreeAvailable: true,
+            googleFreeAvailable: freeProviderAvailable,
             googleCloudConfigured: googleCloudEnabled && hasKeyCloud && !cloudKeyInvalid,
             aiProvider: (hasKeyProvider && !aiKeyInvalid) ? aiProvider : nil)
     }

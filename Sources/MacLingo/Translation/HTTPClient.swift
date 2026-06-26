@@ -1,22 +1,20 @@
 import Foundation
 
 /// Minimal async HTTP seam so providers are testable without the network. The live
-/// conformer wraps `URLSession`.
-///
-/// > NOTE(Phase 7): the live client currently uses a default session. The
-/// > networking trust boundary — dual allowlists and **explicit per-redirect
-/// > validation** (spec §9) — is layered on in Phase 7 via a `URLSession`
-/// > delegate. The host allowlist is already enforced at request-build time
-/// > (`GoogleFreeEndpoint`).
+/// conformer wraps a **hardened** `URLSession` whose redirects are validated by
+/// ``HardenedSessionDelegate`` (spec §9, P0): default redirect auto-following is
+/// disabled and every 3xx is checked against ``RedirectValidator`` before it is
+/// followed. The host allowlist is also enforced at request-build time
+/// (`GoogleFreeEndpoint`, `AIChatEndpoint`, `GoogleCloudEndpoint`).
 protocol HTTPClient: Sendable {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse)
 }
 
-/// Live `HTTPClient` over `URLSession`.
+/// Live `HTTPClient` over a redirect-validating, non-persisting `URLSession`.
 struct URLSessionHTTPClient: HTTPClient {
     private let session: URLSession
 
-    init(session: URLSession = .shared) {
+    init(session: URLSession = .hardened()) {
         self.session = session
     }
 

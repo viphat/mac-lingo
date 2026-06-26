@@ -26,5 +26,15 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 ShareWis</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://updates.maclingo.invalid/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string></string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

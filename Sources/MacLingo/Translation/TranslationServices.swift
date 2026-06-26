@@ -32,6 +32,8 @@ struct CloudRuntimeConfig: Sendable, Equatable {
 final class TranslationServiceRegistry: TranslationServiceProviding, @unchecked Sendable {
     private let lock = NSLock()
     private let httpClient: HTTPClient
+    /// Local-only availability monitor handed to each Free provider (spec §6.1/§9).
+    let availabilityMonitor: AvailabilityMonitor
     private var googleFreeEndpoint: String
     private var googleFreeAvailable: Bool
     private var aiConfig: AIRuntimeConfig?
@@ -39,12 +41,14 @@ final class TranslationServiceRegistry: TranslationServiceProviding, @unchecked 
 
     init(
         httpClient: HTTPClient = URLSessionHTTPClient(),
+        availabilityMonitor: AvailabilityMonitor = AvailabilityMonitor(),
         googleFreeEndpoint: String = TrustMaterial.defaultGoogleFreeEndpoint,
         googleFreeAvailable: Bool = true,
         aiConfig: AIRuntimeConfig? = nil,
         cloudConfig: CloudRuntimeConfig? = nil
     ) {
         self.httpClient = httpClient
+        self.availabilityMonitor = availabilityMonitor
         self.googleFreeEndpoint = googleFreeEndpoint
         self.googleFreeAvailable = googleFreeAvailable
         self.aiConfig = aiConfig
@@ -78,7 +82,10 @@ final class TranslationServiceRegistry: TranslationServiceProviding, @unchecked 
         }
         switch engine {
         case .googleFree:
-            return freeOn ? GoogleFreeProvider(endpoint: endpoint, client: httpClient) : nil
+            return freeOn
+                ? GoogleFreeProvider(
+                    endpoint: endpoint, client: httpClient, monitor: availabilityMonitor)
+                : nil
         case .openAI, .deepSeek:
             guard let ai, ai.engineID == engine else { return nil }
             switch engine {

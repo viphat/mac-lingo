@@ -12,17 +12,22 @@ struct GoogleFreeProvider: TranslationService {
     private let client: HTTPClient
     private let maxRetries: Int
     private let baseBackoff: Duration
+    /// Local-only availability monitoring (spec §6.1/§9). No telemetry — outcomes
+    /// are recorded on-device for the diagnostics readout only.
+    private let monitor: AvailabilityMonitor?
 
     init(
         endpoint: String = TrustMaterial.defaultGoogleFreeEndpoint,
         client: HTTPClient = URLSessionHTTPClient(),
         maxRetries: Int = 2,
-        baseBackoff: Duration = .milliseconds(300)
+        baseBackoff: Duration = .milliseconds(300),
+        monitor: AvailabilityMonitor? = nil
     ) {
         self.endpoint = endpoint
         self.client = client
         self.maxRetries = maxRetries
         self.baseBackoff = baseBackoff
+        self.monitor = monitor
     }
 
     func translate(_ request: TranslationRequest) async throws -> TranslationResult {
@@ -76,11 +81,13 @@ struct GoogleFreeProvider: TranslationService {
             let (data, response) = try await client.data(for: urlRequest)
 
             if (200..<300).contains(response.statusCode) {
+                await monitor?.record(.success)
                 return try GoogleFreeResponseParser.parse(data)
             }
 
             let retryable = response.statusCode == 429 || (500..<600).contains(response.statusCode)
             guard retryable, attempt < maxRetries else {
+                await monitor?.record(response.statusCode == 429 ? .rateLimited : .error)
                 throw TranslationError.http(status: response.statusCode)
             }
             // Exponential backoff (300 ms, 600 ms, …); cancellation-aware.

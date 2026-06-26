@@ -28,6 +28,20 @@ final class AppModel: ObservableObject {
     /// Trigger → capture → translate → present pipeline (spec §3.1).
     let coordinator: TranslationCoordinator
 
+    /// Fail-closed remote-config lifecycle (spec §6.1). Created at bootstrap so the
+    /// persisted state (sticky-disable, epoch floor) is read before any trigger.
+    private var remoteConfig: RemoteConfigCoordinator?
+
+    /// Local-only availability snapshot for diagnostics (spec §6.1/§9). No telemetry.
+    var availabilityMonitor: AvailabilityMonitor { registry.availabilityMonitor }
+
+    /// Sparkle updater (spec §10). Lazy so background feed checks never start in
+    /// unit tests that don't drive the menu.
+    private lazy var updateController = UpdateController()
+
+    /// Menu entry point for "Check for Updates…".
+    func checkForUpdates() { updateController.checkForUpdates() }
+
     /// Result of the most recent launch migration, surfaced to the UI when the
     /// store had to be reset (spec §5.5).
     @Published private(set) var migrationOutcome: SettingsMigrationOutcome = .upToDate
@@ -70,8 +84,45 @@ final class AppModel: ObservableObject {
         reconciler.reconcileAtLaunch()
         refreshAIRuntimeConfig()
         refreshCloudRuntimeConfig()
+        startRemoteConfig()
         hotkey.setTriggerHandler { [weak self] in self?.handleTranslateTrigger() }
         permissions.recheck()
+    }
+
+    /// Bring up the remote-config lifecycle (spec §6.1). `start()` immediately
+    /// publishes the persisted effective state (so a prior sticky-disable applies
+    /// even offline), then fetches best-effort in the background.
+    private func startRemoteConfig() {
+        let coordinator = RemoteConfigCoordinator(
+            store: RemoteConfigStore(defaults: .standard)
+        ) { [weak self] effective in
+            self?.applyFreeEffectiveState(effective)
+        }
+        remoteConfig = coordinator
+        coordinator.start()
+    }
+
+    /// Apply a remote-config decision to the Google Free provider **atomically**
+    /// (spec §6.1, §5.5): update the registry endpoint/availability, then reconcile
+    /// (a stale default falls back, the Free cache is invalidated, and open panels
+    /// re-resolve their engine — pinned panels keep their rendered result).
+    func applyFreeEffectiveState(_ effective: EffectiveFreeState) {
+        switch effective {
+        case .disabled:
+            settings.googleFreeAvailable = false
+            registry.updateGoogleFree(
+                endpoint: TrustMaterial.defaultGoogleFreeEndpoint, available: false)
+        case .endpoint(let host):
+            settings.googleFreeAvailable = true
+            registry.updateGoogleFree(
+                endpoint: TrustMaterial.googleFreeEndpoint(forHost: host), available: true)
+        case .compiledDefault:
+            settings.googleFreeAvailable = true
+            registry.updateGoogleFree(
+                endpoint: TrustMaterial.defaultGoogleFreeEndpoint, available: true)
+        }
+        reconciler.reconcileProvidersLive()
+        fanOutProviderReconcile()
     }
 
     /// Hotkey / menu entry point. Re-checks Accessibility, then hands off to the
@@ -256,6 +307,14 @@ final class AppModel: ObservableObject {
         reconciler.reconcileProvidersLive()
         refreshAIRuntimeConfig()
         refreshCloudRuntimeConfig()
+        fanOutProviderReconcile()
+    }
+
+    /// Bump `providerConfigRevision` (invalidating dependent cache entries) and fan
+    /// the change out to every open panel (spec §5.5). Shared by provider changes
+    /// and remote-config (Free) changes so both invalidate caches and re-resolve a
+    /// now-invalid engine identically.
+    private func fanOutProviderReconcile() {
         let revision = settings.bumpProviderConfigRevision()
         let configured = settings.configuredEngines
         let available = TranslationCoordinator.availableEngines(configured)

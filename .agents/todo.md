@@ -18,12 +18,13 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 | 4 | Formatting preservation + markup trust boundary | 🚧 Code complete — codec + sanitizer + rich modal/copy done; on-device QA pending |
 | 5 | AI providers (BYOK) + Keychain + live reconciliation | 🚧 Code complete — providers + paid-gate + live reconcile + UI; on-device QA pending |
 | 6 | Google Cloud provider | 🚧 Code complete — v2 provider + key/Validate UI + reconcile + paid-gate; on-device QA pending |
-| 7 | Networking trust boundary, remote config & hardening | ⛔ Not started |
-| 8 | Packaging & release | ⛔ Not started |
+| 7 | Networking trust boundary, remote config & hardening | 🚧 Code complete — redirect validation + fail-closed remote config + availability monitor; on-device QA pending |
+| 8 | Packaging & release | 🚧 Code complete — Sparkle wired + release/privacy docs; signing/notarization/keys + §12 matrix are human gates |
 
 **Toolchain:** Xcode 26.5, macOS 26.5 SDK, Swift 6 strict concurrency.
-**Build verified:** `xcodebuild` BUILD + TEST SUCCEEDED; `swiftlint --strict` and
-`swift-format --strict` clean. **146 unit tests passing.**
+**Build verified:** `xcodebuild` BUILD + TEST SUCCEEDED (Debug **and** universal
+Release — `lipo` shows `x86_64 arm64`); `swiftlint --strict` and
+`swift-format --strict` clean. **176 unit tests passing.**
 
 ---
 
@@ -285,13 +286,59 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 - [ ] **On-device QA** (manual; real Cloud key, styled selection HTML fidelity,
       over-threshold confirm, redacted diagnostics) → Human tasks.
 
-### Phase 7 — networking trust boundary, remote config & hardening
-- [ ] Dual allowlists enforced; **HTTP-redirect validation** (P0); fail-closed remote
-      config (signature, monotonic version, sticky-disable, epoch floor); degraded behavior.
+### Phase 7 — networking trust boundary, remote config & hardening (code complete) 🚧
+- [x] **Dual allowlists** — `TrustMaterial.allowlist(for:)` (case-insensitive)
+      classifies a host as translation-data / control-plane / none; the two are
+      never merged.
+- [x] **HTTP-redirect validation (P0):** `RedirectValidator` (pure: follow /
+      followStripped / reject) + `HardenedSessionDelegate` (`URLSession`
+      `willPerformHTTPRedirection`) — default auto-following disabled, every 3xx
+      inspected, body + `Authorization`/`X-Goog-Api-Key` dropped on host change,
+      cross/off-allowlist rejected. `URLSessionHTTPClient` now uses
+      `URLSession.hardened()` (ephemeral, no disk cache/cookies — §9 "nothing
+      persisted to disk").
+- [x] **Fail-closed remote config:** `RemoteConfigPayload`/`SignedRemoteConfig`
+      (canonical sorted-keys JSON, seconds-since-1970 dates); `RemoteConfigVerifier`
+      (Ed25519 via CryptoKit, **primary + backup** keys, endpoint-allowlist check,
+      fail-closed on empty/placeholder keys); `RemoteConfigState` (pure state
+      machine — monotonic version, sticky disable, expiring enable/endpoint,
+      **clock-rollback-safe** via a monotonic `lastObserved` high-water mark,
+      **monotonic epoch floor** + epoch-bump discard of prior configs);
+      `RemoteConfigStore` (JSON in UserDefaults), `RemoteConfigFetcher`
+      (control-plane only, never carries text, time-boxed), `RemoteConfigCoordinator`
+      (@MainActor glue: normalize-at-launch → publish → 12 h jittered + foreground
+      fetch → verify → apply).
+- [x] **Atomic application + degraded behavior:** `AppModel.applyFreeEffectiveState`
+      updates the registry endpoint/availability + `SettingsStore.googleFreeAvailable`
+      (in-memory mirror feeding `configuredEngines`), then reconciles + fans out
+      (bump `providerConfigRevision`, invalidate Free cache, re-resolve engine;
+      pinned panels retain their result). Free-blocked fallback (AI → Cloud → error)
+      via the existing `EngineResolver`.
+- [x] **Local-only availability monitoring:** `AvailabilityMonitor` (actor;
+      success/rate-limit/error counts + recent block rate) wired into
+      `GoogleFreeProvider` via the registry; surfaced in *Settings → Diagnostics*.
+      **No telemetry.**
+- [x] Build + lint clean; tests pass (+`RedirectValidatorTests` 9,
+      `RemoteConfigTests` 19, `AvailabilityMonitorTests` 3). **176 tests total.**
+- [ ] **On-device QA** (kill-switch fallback, redirect rejection via a proxy) → Human tasks.
 
-### Phase 8 — packaging & release
-- [ ] Verify universal/Release build; notarized stapled `.dmg`; signed Sparkle feed;
-      config-epoch in release process; run spec §12 acceptance matrix; legal/ToS sign-off.
+### Phase 8 — packaging & release (code complete) 🚧
+- [x] **Sparkle:** `UpdateController` (lazy `SPUStandardUpdaterController`) +
+      "Check for Updates…" in the menu and *Settings → Updates*; Info.plist trust
+      keys in `project.yml` (`SUFeedURL`, `SUPublicEDKey`, `SURequireSignedFeed`,
+      `SUEnableAutomaticChecks`, `SUScheduledCheckInterval`) — **placeholders fail
+      closed** until a release fills the real host + EdDSA public key.
+- [x] **Verify universal/Release build:** `Release` builds universal; `lipo` shows
+      `x86_64 arm64`.
+- [x] **Docs:** `docs/RELEASE.md` (signing/notarize/staple, signed appcast + feed,
+      settings-schema compatibility, **config-epoch procedure**, §12 acceptance gate),
+      `docs/PRIVACY.md` (what's sent where, signed-config disclosure, no-telemetry),
+      `CHANGELOG.md`; README security/privacy + releasing sections.
+- [x] Build + lint clean; tests pass.
+- [ ] **Human gates:** Developer ID signing, notarization, Sparkle EdDSA key,
+      remote-config key pair (primary+backup) + host wiring, legal/ToS sign-off on
+      the Free default, and the full **spec §12 acceptance matrix** on a clean
+      macOS 15 machine → see Human tasks + `docs/RELEASE.md`.
 
 ---
 
@@ -364,8 +411,18 @@ Needs a built app + live network + rich source/target apps.
   `captureTask.cancel()` in `TranslationCoordinator`, so a superseded capture never
   presents. Apply-if-current (registry) is the authoritative correctness gate; task
   cancellation is an optimization (mocks deliberately ignore cancellation to prove this).
-- **Phase 3 networking is deliberately un-hardened:** `URLSessionHTTPClient` uses a plain
-  session. The host allowlist is enforced at request-build (`GoogleFreeEndpoint`), but the
-  per-redirect `URLSession`-delegate validation (§9) is Phase 7. Don't ship without it.
+- **Networking is hardened as of Phase 7:** `URLSessionHTTPClient` defaults to
+  `URLSession.hardened()` — ephemeral (no disk cache/cookies) with
+  `HardenedSessionDelegate` validating every redirect (`RedirectValidator`). Tests
+  inject a mock `HTTPClient`, so they don't exercise the live delegate; the redirect
+  policy is covered by `RedirectValidatorTests` directly.
+- **Remote-config trust is pure + tested:** all decisions live in `RemoteConfigState`
+  (state machine) + `RemoteConfigVerifier` (Ed25519). The `@MainActor`
+  `RemoteConfigCoordinator` is thin glue (timing/IO) and applies via `AppModel`.
+  `TrustMaterial` config/Sparkle keys + hosts are still **placeholders** (fail-closed)
+  — a release fills them (see `docs/RELEASE.md`).
+- **Free availability** flows through `SettingsStore.googleFreeAvailable` (in-memory,
+  NOT persisted — authoritative state is `RemoteConfigStore`), so `configuredEngines`
+  stays the single source for resolution/selector.
 - **Provider config revision** is fixed at `0` until Phase 5 wires bumping; it's already a
   `CacheKey` field so a changed model/key/endpoint will force a miss once wired.
