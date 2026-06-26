@@ -272,9 +272,24 @@ final class PanelSession {
         self.availableEngines = availableEngines
         registry.invalidateCache()
 
+        let engineInvalid = !availableEngines.contains(engine)
+
+        // A held confirmation captured a service built from the OLD config (key /
+        // model / provider). The config just changed, so that service is stale —
+        // drop it and rebuild the confirmation against the new config so a later
+        // confirm can never send a stale key. This applies to pinned panels too: a
+        // paused confirmation is not a rendered result, and re-presenting only
+        // re-shows the prompt (no spend) (spec §5.5, §6.5).
+        if case .confirmPaid = display {
+            task?.cancel()
+            pending = nil
+            if engineInvalid { engine = resolvedEngine }
+            present()
+            return
+        }
+
         guard !pinned else { return }
 
-        let engineInvalid = !availableEngines.contains(engine)
         if engineInvalid {
             task?.cancel()
             switchEngine(resolvedEngine)

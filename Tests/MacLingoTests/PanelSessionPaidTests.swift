@@ -240,7 +240,10 @@ final class PanelSessionPaidTests: XCTestCase {
             providerConfigRevision: 0, availableEngines: [.googleFree])
         session.begin(
             snapshot: snapshot("hi"), engine: .googleFree, target: .en, availableEngines: [.googleFree])
-        await waitUntil { counter.count == 1 }
+        // Wait for the result to *apply* (not merely the service call) so reconcile
+        // sees a settled result, not a still-loading op.
+        await waitUntil { if case .result = session.display { return true } else { return false } }
+        XCTAssertEqual(counter.count, 1)
 
         // Same engine still valid: reconcile invalidates cache + adopts revision.
         session.reconcile(revision: 5, availableEngines: [.googleFree], resolvedEngine: .googleFree)
@@ -270,5 +273,65 @@ final class PanelSessionPaidTests: XCTestCase {
         }
         XCTAssertEqual(result.text.plainText, "AI")
         XCTAssertEqual(session.engine, .openAI, "pinned engine is not re-resolved")
+    }
+
+    /// A held confirmation captures a service built from the old config; a live
+    /// reconcile must drop it and rebuild the prompt under a fresh operation so a
+    /// later confirm can't send a stale key/model (spec §5.5, §6.5).
+    func testReconcileRebuildsHeldConfirmation() async {
+        let counter = CallCounter()
+        let services = MockServices(map: [
+            .openAI: MockService(id: .openAI, counter: counter, text: "AI")
+        ])
+        let policy = SendPolicy(paidConfirmThreshold: 3)
+        let session = PanelSession(
+            services: services, engine: .openAI, target: .en,
+            providerConfigRevision: 0, availableEngines: [.openAI], policy: policy)
+        session.begin(
+            snapshot: snapshot("hello there"), engine: .openAI, target: .en,
+            availableEngines: [.openAI], policy: policy)
+        guard case .confirmPaid = session.display else { return XCTFail("expected a pause") }
+        let opBeforeReconcile = session.registry.current
+
+        // Key replaced mid-confirmation (engine still configured).
+        session.reconcile(revision: 1, availableEngines: [.openAI], resolvedEngine: .openAI)
+
+        // Re-prompted under a fresh operation; the stale pending send is gone.
+        guard case .confirmPaid = session.display else { return XCTFail("expected re-prompt") }
+        XCTAssertGreaterThan(session.registry.current, opBeforeReconcile, "a new op was opened")
+        XCTAssertEqual(session.providerConfigRevision, 1)
+        XCTAssertEqual(counter.count, 0, "rebuilding the prompt never spends")
+
+        // Confirming now issues under the rebuilt operation.
+        session.confirmPaidSend()
+        await waitUntil { if case .result = session.display { return true } else { return false } }
+        XCTAssertEqual(counter.count, 1)
+    }
+
+    /// If the held confirmation's engine became invalid, reconcile re-resolves to a
+    /// configured engine; falling back to a free engine clears the prompt (no spend).
+    func testReconcileDuringConfirmReResolvesInvalidEngine() async {
+        let free = CallCounter()
+        let ai = CallCounter()
+        let services = MockServices(map: [
+            .googleFree: MockService(id: .googleFree, counter: free, text: "FREE"),
+            .openAI: MockService(id: .openAI, counter: ai, text: "AI"),
+        ])
+        let policy = SendPolicy(paidConfirmThreshold: 3)
+        let session = PanelSession(
+            services: services, engine: .openAI, target: .en,
+            providerConfigRevision: 0, availableEngines: [.googleFree, .openAI], policy: policy)
+        session.begin(
+            snapshot: snapshot("hello there"), engine: .openAI, target: .en,
+            availableEngines: [.googleFree, .openAI], policy: policy)
+        guard case .confirmPaid = session.display else { return XCTFail("expected a pause") }
+
+        // AI key removed → fall back to Google Free (free, so no confirmation).
+        session.reconcile(revision: 1, availableEngines: [.googleFree], resolvedEngine: .googleFree)
+        await waitUntil {
+            if case .result(let res) = session.display { return res.engine == .googleFree } else { return false }
+        }
+        XCTAssertEqual(session.engine, .googleFree)
+        XCTAssertEqual(ai.count, 0, "the stale paid send was never issued")
     }
 }

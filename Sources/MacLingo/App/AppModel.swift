@@ -104,13 +104,17 @@ final class AppModel: ObservableObject {
     func setAIKey(_ key: String, provider: AIProvider) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        settings.aiProvider = provider
+        // Apply the system op (Keychain store) first; persist desired state **only on
+        // success** (spec §5.5). On failure nothing is persisted — no orphaned
+        // provider selection without a key.
         do {
             try keychain.store(trimmed, for: .aiProvider)
+            settings.aiProvider = provider
             settings.hasKeyProvider = true
             settings.aiKeyInvalid = false
         } catch {
             log.error("storing AI key failed: \(String(describing: error), privacy: .public)")
+            return
         }
         reconcileProvidersLive()
     }
