@@ -17,13 +17,13 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 | 3 | Translation service + Google Free + modal (plain text) | 🚧 Code complete — pipeline + modal done; on-device QA pending |
 | 4 | Formatting preservation + markup trust boundary | 🚧 Code complete — codec + sanitizer + rich modal/copy done; on-device QA pending |
 | 5 | AI providers (BYOK) + Keychain + live reconciliation | 🚧 Code complete — providers + paid-gate + live reconcile + UI; on-device QA pending |
-| 6 | Google Cloud provider | ⛔ Not started |
+| 6 | Google Cloud provider | 🚧 Code complete — v2 provider + key/Validate UI + reconcile + paid-gate; on-device QA pending |
 | 7 | Networking trust boundary, remote config & hardening | ⛔ Not started |
 | 8 | Packaging & release | ⛔ Not started |
 
 **Toolchain:** Xcode 26.5, macOS 26.5 SDK, Swift 6 strict concurrency.
 **Build verified:** `xcodebuild` BUILD + TEST SUCCEEDED; `swiftlint --strict` and
-`swift-format --strict` clean. **133 unit tests passing.**
+`swift-format --strict` clean. **146 unit tests passing.**
 
 ---
 
@@ -267,7 +267,23 @@ Authoritative design: `docs/MacLingo-spec.md`. Conventions/invariants: `CLAUDE.m
 - [ ] **On-device QA** (manual; real key, Enhance toggle, over-threshold confirm) → Human tasks.
 
 ### Phase 6 — Google Cloud (v2 + `X-Goog-Api-Key` header)
-- [ ] `GoogleCloudProvider`, settings toggle + key + Validate; paid-confirm + reconciliation.
+- [x] `GoogleCloudEndpoint` (v2 `language/translate/v2`; key in **`X-Goog-Api-Key`
+      header**, never the URL; `format=html`; translation-data host-allowlist guard;
+      `redactedDescription`) + `GoogleCloudResponseParser` (`data.translations[0]`).
+- [x] `GoogleCloudProvider` — block-by-block, HTML round-trip via `RichTextCodec`
+      (sanitize + structural validate → degrade-to-plain), reassemble by block index,
+      edge-whitespace reattachment, language aggregation from `detectedSourceLanguage`,
+      backoff on 429/5xx, **401/403 → `.unauthorized`**.
+- [x] `TranslationServiceRegistry` wired (`CloudRuntimeConfig`, live `updateCloudConfig`);
+      `AppModel` Cloud key save/remove/enable/Validate + 401 → unconfigured; cloud
+      participates in launch + live reconciliation (already in `StateReconciler`).
+- [x] Settings UI: Google Cloud section (enable toggle, key entry, Validate, Remove,
+      key status, per-character billing note).
+- [x] Paid-confirmation: Cloud is `isPaid` → already gated at the `SendPolicy` send
+      boundary (entry-point-agnostic; over-threshold prompts, cache hits exempt).
+- [x] Build + lint clean; tests pass (+13 `GoogleCloudTests`). **Commit Phase 6.**
+- [ ] **On-device QA** (manual; real Cloud key, styled selection HTML fidelity,
+      over-threshold confirm, redacted diagnostics) → Human tasks.
 
 ### Phase 7 — networking trust boundary, remote config & hardening
 - [ ] Dual allowlists enforced; **HTTP-redirect validation** (P0); fail-closed remote

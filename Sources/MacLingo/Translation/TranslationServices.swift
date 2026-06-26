@@ -16,6 +16,14 @@ struct AIRuntimeConfig: Sendable, Equatable {
     let apiKey: String
 }
 
+/// Runtime configuration for the optional Google Cloud engine (spec §6.2): the key
+/// read from the Keychain. Rebuilt by reconciliation whenever the key/enabled state
+/// changes; `nil` when Cloud is disabled or unconfigured. The key is held in memory
+/// only while Cloud is active and is **never** logged (spec §9).
+struct CloudRuntimeConfig: Sendable, Equatable {
+    let apiKey: String
+}
+
 /// Factory mapping `EngineID` → live `TranslationService`, with a mutable AI
 /// configuration so a mid-session key/model/provider change takes effect on the
 /// next request (paired with a `providerConfigRevision` bump that misses the cache,
@@ -27,23 +35,32 @@ final class TranslationServiceRegistry: TranslationServiceProviding, @unchecked 
     private var googleFreeEndpoint: String
     private var googleFreeAvailable: Bool
     private var aiConfig: AIRuntimeConfig?
+    private var cloudConfig: CloudRuntimeConfig?
 
     init(
         httpClient: HTTPClient = URLSessionHTTPClient(),
         googleFreeEndpoint: String = TrustMaterial.defaultGoogleFreeEndpoint,
         googleFreeAvailable: Bool = true,
-        aiConfig: AIRuntimeConfig? = nil
+        aiConfig: AIRuntimeConfig? = nil,
+        cloudConfig: CloudRuntimeConfig? = nil
     ) {
         self.httpClient = httpClient
         self.googleFreeEndpoint = googleFreeEndpoint
         self.googleFreeAvailable = googleFreeAvailable
         self.aiConfig = aiConfig
+        self.cloudConfig = cloudConfig
     }
 
     /// Replace the active AI configuration (live reconciliation, spec §5.5). Pass
     /// `nil` to drop AI (key removed / provider invalid).
     func updateAIConfig(_ config: AIRuntimeConfig?) {
         lock.withLock { aiConfig = config }
+    }
+
+    /// Replace the active Google Cloud configuration (live reconciliation, spec
+    /// §5.5). Pass `nil` to drop Cloud (disabled / key removed / invalid).
+    func updateCloudConfig(_ config: CloudRuntimeConfig?) {
+        lock.withLock { cloudConfig = config }
     }
 
     /// Switch the Google Free endpoint among allowlisted hosts (Phase 7 remote
@@ -56,8 +73,8 @@ final class TranslationServiceRegistry: TranslationServiceProviding, @unchecked 
     }
 
     func service(for engine: EngineID) -> TranslationService? {
-        let (endpoint, freeOn, ai) = lock.withLock {
-            (googleFreeEndpoint, googleFreeAvailable, aiConfig)
+        let (endpoint, freeOn, ai, cloud) = lock.withLock {
+            (googleFreeEndpoint, googleFreeAvailable, aiConfig, cloudConfig)
         }
         switch engine {
         case .googleFree:
@@ -75,7 +92,8 @@ final class TranslationServiceRegistry: TranslationServiceProviding, @unchecked 
                 return nil
             }
         case .googleCloud:
-            return nil  // Phase 6
+            guard let cloud else { return nil }
+            return GoogleCloudProvider(apiKey: cloud.apiKey, client: httpClient)
         }
     }
 }

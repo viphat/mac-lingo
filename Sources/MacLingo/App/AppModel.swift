@@ -69,6 +69,7 @@ final class AppModel: ObservableObject {
         }
         reconciler.reconcileAtLaunch()
         refreshAIRuntimeConfig()
+        refreshCloudRuntimeConfig()
         hotkey.setTriggerHandler { [weak self] in self?.handleTranslateTrigger() }
         permissions.recheck()
     }
@@ -168,11 +169,83 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - Google Cloud key / enablement (spec §5.5, §6.2, §9)
+
+    /// Store a new Google Cloud API key in the Keychain (never Defaults), enable
+    /// Cloud, and live-reconcile. A new key clears any "invalid" marker.
+    func setCloudKey(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // System op (Keychain store) first; persist desired state **only on success**
+        // (spec §5.5) — no enabled-without-a-key state.
+        do {
+            try keychain.store(trimmed, for: .googleCloud)
+            settings.hasKeyCloud = true
+            settings.cloudKeyInvalid = false
+            settings.googleCloudEnabled = true
+        } catch {
+            log.error("storing Google Cloud key failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+        reconcileProvidersLive()
+    }
+
+    /// Remove the Google Cloud key from the Keychain, disable Cloud, and
+    /// live-reconcile (default falls back if it was Cloud).
+    func removeCloudKey() {
+        try? keychain.delete(.googleCloud)
+        settings.hasKeyCloud = false
+        settings.cloudKeyInvalid = false
+        settings.googleCloudEnabled = false
+        reconcileProvidersLive()
+    }
+
+    /// Toggle Cloud enablement (the key stays in the Keychain) and live-reconcile.
+    func setCloudEnabled(_ enabled: Bool) {
+        settings.googleCloudEnabled = enabled
+        reconcileProvidersLive()
+    }
+
+    /// Validate the stored Cloud key with a minimal request (spec §7). A 401/403
+    /// marks Cloud unconfigured; a network error is inconclusive and does not.
+    func validateCloudKey() async -> KeyValidationResult {
+        guard let key = try? keychain.read(.googleCloud), !key.isEmpty else {
+            return .failed("no key stored")
+        }
+
+        let service = GoogleCloudProvider(apiKey: key)
+        let request = TranslationRequest(
+            operationID: 0,
+            selection: SelectionSnapshot(id: 0, source: FormattedText(plainText: "hello")),
+            engine: .googleCloud, target: .en)
+
+        do {
+            _ = try await service.translate(request)
+            settings.cloudKeyInvalid = false
+            reconcileProvidersLive()
+            return .valid
+        } catch TranslationError.unauthorized {
+            settings.cloudKeyInvalid = true
+            reconcileProvidersLive()
+            return .invalidKey
+        } catch {
+            return .failed(String(describing: error))
+        }
+    }
+
     private func handleProviderUnauthorized(_ engine: EngineID) {
-        guard engine.isAI else { return }  // Cloud handled in Phase 6
-        guard !settings.aiKeyInvalid else { return }
-        log.notice("AI provider returned 401/403; marking unconfigured")
-        settings.aiKeyInvalid = true
+        switch engine {
+        case .openAI, .deepSeek:
+            guard !settings.aiKeyInvalid else { return }
+            log.notice("AI provider returned 401/403; marking unconfigured")
+            settings.aiKeyInvalid = true
+        case .googleCloud:
+            guard !settings.cloudKeyInvalid else { return }
+            log.notice("Google Cloud returned 401/403; marking unconfigured")
+            settings.cloudKeyInvalid = true
+        case .googleFree:
+            return
+        }
         reconcileProvidersLive()
     }
 
@@ -182,6 +255,7 @@ final class AppModel: ObservableObject {
     private func reconcileProvidersLive() {
         reconciler.reconcileProvidersLive()
         refreshAIRuntimeConfig()
+        refreshCloudRuntimeConfig()
         let revision = settings.bumpProviderConfigRevision()
         let configured = settings.configuredEngines
         let available = TranslationCoordinator.availableEngines(configured)
@@ -201,5 +275,17 @@ final class AppModel: ObservableObject {
         }
         registry.updateAIConfig(
             AIRuntimeConfig(engineID: provider.engineID, model: settings.aiModel, apiKey: key))
+    }
+
+    /// Push the current Google Cloud key into the service registry, or clear it when
+    /// Cloud is disabled / unconfigured / marked invalid.
+    private func refreshCloudRuntimeConfig() {
+        guard settings.googleCloudEnabled, settings.hasKeyCloud, !settings.cloudKeyInvalid,
+            let key = try? keychain.read(.googleCloud), !key.isEmpty
+        else {
+            registry.updateCloudConfig(nil)
+            return
+        }
+        registry.updateCloudConfig(CloudRuntimeConfig(apiKey: key))
     }
 }

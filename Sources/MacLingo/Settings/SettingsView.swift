@@ -17,6 +17,12 @@ struct SettingsView: View {
     @State private var validationMessage: String?
     @State private var isValidating = false
 
+    /// Transient Cloud key entry — same Keychain-on-Save / clear contract as the AI
+    /// key (spec §9).
+    @State private var cloudKeyDraft = ""
+    @State private var cloudValidationMessage: String?
+    @State private var isValidatingCloud = false
+
     var body: some View {
         Form {
             if case .resetToDefaults = model.migrationOutcome {
@@ -33,6 +39,7 @@ struct SettingsView: View {
             accessibilitySection
             generalSection
             aiSection
+            cloudSection
             hotkeySection
             startupSection
         }
@@ -160,6 +167,63 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private var cloudSection: some View {
+        Section("Google Cloud Translation") {
+            Toggle(
+                "Enable Google Cloud engine",
+                isOn: Binding(
+                    get: { settings.googleCloudEnabled },
+                    set: { model.setCloudEnabled($0) }))
+
+            SecureField("API key", text: $cloudKeyDraft, prompt: Text("Paste your key"))
+            HStack {
+                Button("Save key") {
+                    model.setCloudKey(cloudKeyDraft)
+                    cloudKeyDraft = ""
+                    cloudValidationMessage = nil
+                }
+                .disabled(cloudKeyDraft.isEmpty)
+
+                Button("Validate") { validateCloudKey() }
+                    .disabled(!settings.hasKeyCloud || isValidatingCloud)
+
+                if settings.hasKeyCloud {
+                    Button("Remove key", role: .destructive) {
+                        model.removeCloudKey()
+                        cloudValidationMessage = nil
+                    }
+                }
+                if isValidatingCloud { ProgressView().controlSize(.small) }
+            }
+
+            cloudKeyStatus
+            if let cloudValidationMessage {
+                Text(cloudValidationMessage).font(.caption).foregroundStyle(.secondary)
+            }
+
+            Label(
+                "Google Cloud bills per character. Over-threshold translations ask for "
+                    + "confirmation before sending.",
+                systemImage: "dollarsign.circle"
+            )
+            .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var cloudKeyStatus: some View {
+        if settings.cloudKeyInvalid {
+            Label("Key was rejected — Validate or replace it.", systemImage: "xmark.circle.fill")
+                .foregroundStyle(.orange).font(.caption)
+        } else if settings.hasKeyCloud {
+            Label("Key stored in Keychain.", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green).font(.caption)
+        } else {
+            Text("No key stored. Paste one and Save.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
     private var hotkeySection: some View {
         Section("Hotkey") {
             KeyboardShortcuts.Recorder("Translate selection:", name: .translateSelection)
@@ -218,6 +282,20 @@ struct SettingsView: View {
             case .valid: validationMessage = "Key is valid."
             case .invalidKey: validationMessage = "Key was rejected (401/403)."
             case .failed(let reason): validationMessage = "Couldn’t validate: \(reason)"
+            }
+        }
+    }
+
+    private func validateCloudKey() {
+        isValidatingCloud = true
+        cloudValidationMessage = nil
+        Task {
+            let result = await model.validateCloudKey()
+            isValidatingCloud = false
+            switch result {
+            case .valid: cloudValidationMessage = "Key is valid."
+            case .invalidKey: cloudValidationMessage = "Key was rejected (401/403)."
+            case .failed(let reason): cloudValidationMessage = "Couldn’t validate: \(reason)"
             }
         }
     }
