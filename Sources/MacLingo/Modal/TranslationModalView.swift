@@ -148,7 +148,7 @@ struct TranslationModalView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 240)
+            .frame(maxHeight: 400)
         case .error(let message, _):
             Text(message).foregroundStyle(.secondary)
         case .confirmPaid(let confirm):

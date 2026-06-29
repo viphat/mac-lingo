@@ -19,6 +19,7 @@ final class ModalController: NSObject, NSWindowDelegate {
     let session: PanelSession
     private let model = ModalViewModel()
     private let panel: TranslationPanel
+    private let hosting: NSHostingController<TranslationModalView>
 
     /// Called when this panel has fully closed, so the presenter can drop it.
     var onClosed: ((ModalController) -> Void)?
@@ -34,6 +35,7 @@ final class ModalController: NSObject, NSWindowDelegate {
     init(session: PanelSession) {
         self.session = session
         let hosting = NSHostingController(rootView: TranslationModalView(model: model))
+        self.hosting = hosting
         self.panel = TranslationPanel(contentViewController: hosting)
         super.init()
 
@@ -43,6 +45,7 @@ final class ModalController: NSObject, NSWindowDelegate {
             guard let self else { return }
             self.syncSelectors()
             self.model.apply(display, target: self.session.target)
+            DispatchQueue.main.async { [weak self] in self?.sizeToFit() }
         }
         syncSelectors()
         model.apply(session.display, target: session.target)
@@ -59,7 +62,7 @@ final class ModalController: NSObject, NSWindowDelegate {
     // MARK: - Setup
 
     private func configurePanel() {
-        panel.styleMask = [.borderless, .nonactivatingPanel]
+        panel.styleMask = [.borderless, .nonactivatingPanel, .resizable]
         panel.level = .floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
@@ -69,6 +72,27 @@ final class ModalController: NSObject, NSWindowDelegate {
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.delegate = self
+        panel.minSize = NSSize(width: 280, height: 80)
+    }
+
+    // Resize the panel to wrap its SwiftUI content, keeping the top-left corner
+    // pinned so the panel grows downward (toward the cursor).
+    private func sizeToFit() {
+        hosting.view.needsLayout = true
+        hosting.view.layoutSubtreeIfNeeded()
+        let ideal = hosting.view.fittingSize
+        guard ideal.width > 10, ideal.height > 10 else { return }
+        let old = panel.frame
+        guard old.width != ideal.width || old.height != ideal.height else { return }
+
+        let screen = panel.screen ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+
+        let newX = min(max(old.minX, visible.minX + 8), visible.maxX - ideal.width - 8)
+        let newY = max(old.maxY - ideal.height, visible.minY + 8)
+        panel.setFrame(
+            NSRect(x: newX, y: newY, width: ideal.width, height: ideal.height),
+            display: true, animate: false)
     }
 
     private func wireModelActions() {
@@ -93,13 +117,21 @@ final class ModalController: NSObject, NSWindowDelegate {
     /// Show (or re-anchor) the panel near `point`, then start/replace the session.
     func present(at point: NSPoint, snapshot: SelectionSnapshot?, context: ModalPresenter.Context) {
         isClosing = false
-        panel.orderFront(nil)
-        position(near: point)
-        installMouseMonitors()
         session.begin(
             snapshot: snapshot, engine: context.engine, target: context.target,
             availableEngines: context.availableEngines, policy: context.policy,
             providerConfigRevision: context.providerConfigRevision)
+        // Size to the initial (loading) state before showing, then position.
+        sizeToFit()
+        panel.orderFront(nil)
+        position(near: point)
+        installMouseMonitors()
+        // After SwiftUI settles the first layout pass, snap size + position again.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.sizeToFit()
+            self.position(near: point)
+        }
     }
 
     private func position(near point: NSPoint) {

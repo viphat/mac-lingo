@@ -26,6 +26,7 @@ settings:
     # Phase 8 packaging).
     Debug:
       ONLY_ACTIVE_ARCH: YES
+      CODE_SIGNING_ALLOWED: NO
     Release:
       ONLY_ACTIVE_ARCH: NO
 
