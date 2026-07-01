@@ -46,6 +46,7 @@ final class ModalViewModel: ObservableObject {
     var onTogglePin: () -> Void = {}
     var onHoverChange: (Bool) -> Void = { _ in }
     var onEnhance: () -> Void = {}
+    var onReset: () -> Void = {}
     var onSwitchEngine: (EngineID) -> Void = { _ in }
     var onSwitchTarget: (TargetLanguage) -> Void = { _ in }
     var onConfirmPaid: () -> Void = {}
@@ -120,10 +121,12 @@ struct TranslationModalView: View {
                 Text(result.sourceTag).fontWeight(.semibold)
                 Image(systemName: "arrow.right").font(.caption2)
                 targetMenu
+                resetButton
                 Spacer()
                 engineMenu(current: result.engineName)
             case .loading(let engine, _):
                 targetMenu
+                resetButton
                 Spacer()
                 Text(engine).font(.caption).foregroundStyle(.secondary)
             default:
@@ -214,6 +217,15 @@ struct TranslationModalView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+    }
+
+    @ViewBuilder private var resetButton: some View {
+        Button {
+            model.onReset()
+        } label: {
+            Image(systemName: "arrow.counterclockwise")
+        }
+        .help("Reset to Settings default")
     }
 
     @ViewBuilder private var pinButton: some View {

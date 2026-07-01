@@ -72,11 +72,18 @@ final class AppModel: ObservableObject {
         presenter.onProviderUnauthorized = { [weak self] engine in
             self?.handleProviderUnauthorized(engine)
         }
-        // An explicit, successful in-modal switch becomes the new default, so the
-        // next trigger starts where the user left off (spec §5.5).
+        // An explicit, successful in-modal switch becomes the session override, so
+        // the next trigger starts where the user left off (spec §5.5). The
+        // Settings-screen default itself is untouched.
         presenter.onCommit = { [weak self] engine, target in
-            self?.settings.targetLanguage = target
-            self?.settings.defaultEngine = EngineResolver.defaultEngine(for: engine)
+            self?.settings.lastUsedTargetLanguage = target
+            self?.settings.lastUsedEngine = engine
+        }
+        // The modal's Reset action forgets the session override entirely, so
+        // future triggers go back to the Settings-screen default (spec §5.5).
+        presenter.onReset = { [weak self] in
+            self?.settings.lastUsedTargetLanguage = nil
+            self?.settings.lastUsedEngine = nil
         }
     }
 

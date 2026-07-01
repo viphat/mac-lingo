@@ -58,6 +58,34 @@ enum EngineResolver {
         }
     }
 
+    /// Whether a **concrete** engine is currently configured. Unlike
+    /// `isAvailable(_:available:)`, this never collapses `.openAI`/`.deepSeek` into
+    /// the shared `DefaultEngine.aiProvider` category — used to validate a session
+    /// override (`lastUsedEngine`, spec §5.5) without silently accepting a
+    /// different AI provider than the one actually chosen.
+    static func isEngineValid(_ engine: EngineID, available: ConfiguredEngines) -> Bool {
+        switch engine {
+        case .googleFree: available.googleFreeAvailable
+        case .googleCloud: available.googleCloudConfigured
+        case .openAI: available.aiProvider == .openAI
+        case .deepSeek: available.aiProvider == .deepSeek
+        }
+    }
+
+    /// Resolve with a concrete session override preferred over the Settings
+    /// default (spec §5.5 "remember last choice"): if `preferredEngine` is set and
+    /// still valid, it's used exactly as chosen; otherwise resolution falls back to
+    /// `resolve(preferred:available:)` on `fallback` — never substituting some
+    /// *other* concrete engine (e.g. a different AI provider) for a stale override.
+    static func resolve(
+        preferredEngine: EngineID?, fallback: DefaultEngine, available: ConfiguredEngines
+    ) -> EngineID {
+        if let preferredEngine, isEngineValid(preferredEngine, available: available) {
+            return preferredEngine
+        }
+        return resolve(preferred: fallback, available: available)
+    }
+
     /// The `DefaultEngine` setting value corresponding to a resolved `EngineID`,
     /// used to rewrite a stale default during reconciliation (spec §5.5/§7).
     static func defaultEngine(for engine: EngineID) -> DefaultEngine {

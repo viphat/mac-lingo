@@ -67,6 +67,8 @@ final class SettingsStore: ObservableObject {
         static let aiKeyInvalid = "aiKeyInvalid"
         static let cloudKeyInvalid = "cloudKeyInvalid"
         static let providerConfigRevision = "providerConfigRevision"
+        static let lastUsedTargetLanguage = "lastUsedTargetLanguage"
+        static let lastUsedEngine = "lastUsedEngine"
 
         /// Every key this store owns — used for corruption backup and reset so we
         /// never touch unrelated keys in a shared suite.
@@ -74,7 +76,7 @@ final class SettingsStore: ObservableObject {
             schemaVersion, targetLanguage, defaultEngine, captureMethod, appearance,
             googleCloudEnabled, aiProvider, aiModel, autoEnhance, paidConfirmThreshold,
             autoSpendLimit, launchAtLogin, hasKeyProvider, hasKeyCloud, aiKeyInvalid,
-            cloudKeyInvalid, providerConfigRevision,
+            cloudKeyInvalid, providerConfigRevision, lastUsedTargetLanguage, lastUsedEngine,
         ]
     }
 
@@ -205,6 +207,37 @@ final class SettingsStore: ObservableObject {
         return next
     }
 
+    /// Session override target language, set by an explicit in-modal switch (spec
+    /// §5.5 "remember last choice"). `nil` means no override — a trigger seeds from
+    /// `targetLanguage` (the Settings-screen default) instead. Cleared by the
+    /// modal's Reset action.
+    var lastUsedTargetLanguage: TargetLanguage? {
+        get { decode(Key.lastUsedTargetLanguage) }
+        set {
+            objectWillChange.send()
+            if let newValue {
+                defaults.set(newValue.rawValue, forKey: Key.lastUsedTargetLanguage)
+            } else {
+                defaults.removeObject(forKey: Key.lastUsedTargetLanguage)
+            }
+        }
+    }
+
+    /// Session override engine, set by an explicit in-modal switch (spec §5.5).
+    /// `nil` means no override — a trigger resolves from `defaultEngine` (the
+    /// Settings-screen default) instead. Cleared by the modal's Reset action.
+    var lastUsedEngine: EngineID? {
+        get { decode(Key.lastUsedEngine) }
+        set {
+            objectWillChange.send()
+            if let newValue {
+                defaults.set(newValue.rawValue, forKey: Key.lastUsedEngine)
+            } else {
+                defaults.removeObject(forKey: Key.lastUsedEngine)
+            }
+        }
+    }
+
     // MARK: - Atomic system-state writes (spec §5.5)
 
     /// Apply a system side effect **first**; persist the new value **only if it
@@ -277,6 +310,8 @@ final class SettingsStore: ObservableObject {
     private func validateOrReset(successOutcome: SettingsMigrationOutcome) -> SettingsMigrationOutcome {
         if hasUndecodableValue(Key.targetLanguage, as: TargetLanguage.self) { return reset() }
         if hasUndecodableValue(Key.defaultEngine, as: DefaultEngine.self) { return reset() }
+        if hasUndecodableValue(Key.lastUsedTargetLanguage, as: TargetLanguage.self) { return reset() }
+        if hasUndecodableValue(Key.lastUsedEngine, as: EngineID.self) { return reset() }
         return successOutcome
     }
 

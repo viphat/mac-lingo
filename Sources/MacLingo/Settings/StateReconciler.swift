@@ -26,6 +26,7 @@ struct ReconciliationReport: Equatable, Sendable {
     var defaultEngineCorrectedFrom: DefaultEngine?
     var defaultEngineCorrectedTo: DefaultEngine?
     var autoEnhanceDisabled = false
+    var lastUsedEngineCleared = false
     var notes: [String] = []
 }
 
@@ -62,6 +63,7 @@ final class StateReconciler {
         reconcileLoginItem(&report)
         reconcileKeychainFlags(&report)
         reconcileDefaultEngine(&report)
+        reconcileLastUsedEngine(&report)
         reconcileAutoEnhance(&report)
         if !report.notes.isEmpty {
             log.notice("Launch reconciliation made repairs: \(report.notes, privacy: .public)")
@@ -79,6 +81,7 @@ final class StateReconciler {
         var report = ReconciliationReport()
         reconcileKeychainFlags(&report)
         reconcileDefaultEngine(&report)
+        reconcileLastUsedEngine(&report)
         reconcileAutoEnhance(&report)
         if !report.notes.isEmpty {
             log.notice("Live reconciliation made repairs: \(report.notes, privacy: .public)")
@@ -152,7 +155,18 @@ final class StateReconciler {
         report.notes.append("stale default engine \(preferred) cleared to \(corrected)")
     }
 
-    // MARK: - (e) Auto-enhance must have a valid AI provider (spec §5.5)
+    // MARK: - (e) A stale session override must never silently substitute a
+    // different concrete engine (spec §5.5)
+
+    private func reconcileLastUsedEngine(_ report: inout ReconciliationReport) {
+        guard let lastUsed = settings.lastUsedEngine else { return }
+        guard !EngineResolver.isEngineValid(lastUsed, available: currentConfiguration()) else { return }
+        settings.lastUsedEngine = nil
+        report.lastUsedEngineCleared = true
+        report.notes.append("stale last-used engine \(lastUsed) cleared")
+    }
+
+    // MARK: - (f) Auto-enhance must have a valid AI provider (spec §5.5)
 
     private func reconcileAutoEnhance(_ report: inout ReconciliationReport) {
         guard settings.autoEnhance, currentConfiguration().aiProvider == nil else { return }

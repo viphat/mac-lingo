@@ -112,6 +112,57 @@ final class StateReconcilerTests: XCTestCase {
         XCTAssertEqual(report.defaultEngineCorrectedTo, .googleFree)
     }
 
+    // MARK: - Stale session override (spec §5.5, "remember last choice")
+
+    func testStaleLastUsedEngineIsClearedAtLaunch() {
+        let store = makeIsolatedStore().store
+        // The user explicitly switched to DeepSeek in-modal, but Settings now has a
+        // different (or no) AI provider configured — the override must be forgotten
+        // rather than silently resolving to whatever AI provider happens to be set.
+        store.lastUsedEngine = .deepSeek
+        store.aiProvider = .openAI
+        let keychain = MockKeychain(present: [.aiProvider])
+
+        let report = reconciler(store: store, keychain: keychain, loginItem: MockLoginItem(enabled: false))
+            .reconcileAtLaunch()
+
+        XCTAssertNil(store.lastUsedEngine)
+        XCTAssertTrue(report.lastUsedEngineCleared)
+    }
+
+    func testValidLastUsedEngineIsUntouched() {
+        let store = makeIsolatedStore().store
+        store.lastUsedEngine = .deepSeek
+        store.aiProvider = .deepSeek
+        let keychain = MockKeychain(present: [.aiProvider])
+
+        let report = reconciler(store: store, keychain: keychain, loginItem: MockLoginItem(enabled: false))
+            .reconcileAtLaunch()
+
+        XCTAssertEqual(store.lastUsedEngine, .deepSeek)
+        XCTAssertFalse(report.lastUsedEngineCleared)
+    }
+
+    func testNoLastUsedEngineIsUntouched() {
+        let store = makeIsolatedStore().store
+        let report = reconciler(store: store, loginItem: MockLoginItem(enabled: false)).reconcileAtLaunch()
+        XCTAssertNil(store.lastUsedEngine)
+        XCTAssertFalse(report.lastUsedEngineCleared)
+    }
+
+    func testStaleLastUsedEngineIsClearedLive() {
+        let store = makeIsolatedStore().store
+        store.lastUsedEngine = .openAI  // key about to be found missing
+        store.aiProvider = .openAI
+        let keychain = MockKeychain(present: [])  // key removed
+
+        let report = reconciler(store: store, keychain: keychain, loginItem: MockLoginItem(enabled: false))
+            .reconcileProvidersLive()
+
+        XCTAssertNil(store.lastUsedEngine)
+        XCTAssertTrue(report.lastUsedEngineCleared)
+    }
+
     // MARK: - Live provider reconciliation (spec §5.5)
 
     func testLiveReconcileDisablesAutoEnhanceWithoutValidProvider() {

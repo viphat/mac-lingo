@@ -16,6 +16,37 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.autoEnhance)
         XCTAssertFalse(store.googleCloudEnabled)
         XCTAssertNil(store.aiProvider)
+        XCTAssertNil(store.lastUsedTargetLanguage)
+        XCTAssertNil(store.lastUsedEngine)
+    }
+
+    // MARK: - Last-used session override (spec §5.5 "remember last choice")
+
+    func testLastUsedFieldsRoundTripAndClearToNil() {
+        let env = makeIsolatedStore()
+        env.store.lastUsedTargetLanguage = .vi
+        env.store.lastUsedEngine = .openAI
+
+        let reopened = SettingsStore(defaults: env.suite)
+        XCTAssertEqual(reopened.lastUsedTargetLanguage, .vi)
+        XCTAssertEqual(reopened.lastUsedEngine, .openAI)
+
+        reopened.lastUsedTargetLanguage = nil
+        reopened.lastUsedEngine = nil
+        XCTAssertNil(reopened.lastUsedTargetLanguage)
+        XCTAssertNil(reopened.lastUsedEngine)
+        // Clearing removes the underlying key rather than storing a sentinel.
+        XCTAssertNil(env.suite.object(forKey: "lastUsedTargetLanguage"))
+        XCTAssertNil(env.suite.object(forKey: "lastUsedEngine"))
+    }
+
+    func testLastUsedFieldsDoNotAffectSettingsDefault() {
+        let store = makeIsolatedStore().store
+        store.lastUsedTargetLanguage = .vi
+        store.lastUsedEngine = .openAI
+        // The Settings-screen default is untouched by a session override.
+        XCTAssertEqual(store.targetLanguage, .en)
+        XCTAssertEqual(store.defaultEngine, .googleFree)
     }
 
     func testRoundTripPersistsAcrossInstances() {

@@ -47,4 +47,49 @@ final class EngineResolverTests: XCTestCase {
         XCTAssertEqual(EngineResolver.defaultEngine(for: .openAI), .aiProvider)
         XCTAssertEqual(EngineResolver.defaultEngine(for: .deepSeek), .aiProvider)
     }
+
+    // MARK: - Concrete-engine validity (spec §5.5, session override)
+
+    func testIsEngineValidDistinguishesConcreteAIProviders() {
+        let available = ConfiguredEngines(aiProvider: .deepSeek)
+        XCTAssertTrue(EngineResolver.isEngineValid(.deepSeek, available: available))
+        XCTAssertFalse(
+            EngineResolver.isEngineValid(.openAI, available: available),
+            "a different concrete AI provider than the one configured is invalid, unlike"
+                + " the collapsed DefaultEngine.aiProvider category")
+    }
+
+    func testIsEngineValidForFreeAndCloud() {
+        let available = ConfiguredEngines(googleFreeAvailable: false, googleCloudConfigured: true)
+        XCTAssertFalse(EngineResolver.isEngineValid(.googleFree, available: available))
+        XCTAssertTrue(EngineResolver.isEngineValid(.googleCloud, available: available))
+    }
+
+    // MARK: - Session-override resolution (spec §5.5 "remember last choice")
+
+    func testResolveWithValidPreferredEngineUsesItExactly() {
+        // Two AI providers can't be configured at once today, but the resolution
+        // must still prefer the concrete override over the collapsed fallback.
+        let available = ConfiguredEngines(aiProvider: .deepSeek)
+        XCTAssertEqual(
+            EngineResolver.resolve(preferredEngine: .deepSeek, fallback: .googleFree, available: available),
+            .deepSeek)
+    }
+
+    func testResolveWithStalePreferredEngineFallsBackWithoutSubstitutingAnotherProvider() {
+        // The override pointed at OpenAI, but Settings now has DeepSeek configured.
+        // A stale override must fall back to the resolved *fallback*, never
+        // silently swap in whichever AI provider happens to be configured.
+        let available = ConfiguredEngines(googleFreeAvailable: true, aiProvider: .deepSeek)
+        XCTAssertEqual(
+            EngineResolver.resolve(preferredEngine: .openAI, fallback: .googleFree, available: available),
+            .googleFree)
+    }
+
+    func testResolveWithNilPreferredEngineUsesFallback() {
+        let available = ConfiguredEngines(googleFreeAvailable: true, aiProvider: .openAI)
+        XCTAssertEqual(
+            EngineResolver.resolve(preferredEngine: nil, fallback: .aiProvider, available: available),
+            .openAI)
+    }
 }

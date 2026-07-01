@@ -30,6 +30,10 @@ final class PanelSession {
     /// Engines the modal may switch among (the configured engines, spec §3.1).
     private(set) var availableEngines: [EngineID]
     private var policy: SendPolicy
+    /// The Settings-screen default this trigger resolved (ignoring any session
+    /// override), restored verbatim by the modal's Reset action (spec §5.5).
+    private(set) var resetEngine: EngineID
+    private(set) var resetTarget: TargetLanguage
     /// Pinned panels suppress implicit dismissal (spec §8) and retain their rendered
     /// result across a live `providerConfigRevision` bump (spec §5.5).
     var pinned = false
@@ -62,9 +66,12 @@ final class PanelSession {
     var onProviderUnauthorized: ((EngineID) -> Void)?
     /// Invoked when an explicit, user-initiated engine/target switch actually lands
     /// (spec §5.5 "remember last choice"), so the owner can persist it as the new
-    /// default. Never fires for automatic switches (auto-enhance, live-reconciliation
-    /// fallback) or a declined paid confirmation.
+    /// session override. Never fires for automatic switches (auto-enhance,
+    /// live-reconciliation fallback) or a declined paid confirmation.
     var onCommit: ((EngineID, TargetLanguage) -> Void)?
+    /// Invoked when the modal's Reset action runs, so the owner can forget any
+    /// persisted session override (spec §5.5).
+    var onReset: (() -> Void)?
 
     /// An explicit switch armed here, consumed by `update(_:)` once it lands as a
     /// `.result` (spec §5.5). Cleared without firing on decline/close/new capture.
@@ -76,7 +83,9 @@ final class PanelSession {
         target: TargetLanguage,
         providerConfigRevision: UInt64 = 0,
         availableEngines: [EngineID]? = nil,
-        policy: SendPolicy = SendPolicy()
+        policy: SendPolicy = SendPolicy(),
+        resetEngine: EngineID? = nil,
+        resetTarget: TargetLanguage? = nil
     ) {
         self.services = services
         self.engine = engine
@@ -84,6 +93,8 @@ final class PanelSession {
         self.providerConfigRevision = providerConfigRevision
         self.availableEngines = availableEngines ?? [engine]
         self.policy = policy
+        self.resetEngine = resetEngine ?? engine
+        self.resetTarget = resetTarget ?? target
     }
 
     // MARK: - Presentation changes (each opens a new OperationID, spec §5.3)
@@ -97,7 +108,9 @@ final class PanelSession {
         target: TargetLanguage,
         availableEngines: [EngineID]? = nil,
         policy: SendPolicy? = nil,
-        providerConfigRevision: UInt64? = nil
+        providerConfigRevision: UInt64? = nil,
+        resetEngine: EngineID? = nil,
+        resetTarget: TargetLanguage? = nil
     ) {
         task?.cancel()
         registry.invalidateCache()
@@ -107,6 +120,8 @@ final class PanelSession {
         if let availableEngines { self.availableEngines = availableEngines }
         if let policy { self.policy = policy }
         if let providerConfigRevision { self.providerConfigRevision = providerConfigRevision }
+        self.resetEngine = resetEngine ?? engine
+        self.resetTarget = resetTarget ?? target
         self.didAutoEnhance = false
         self.lastApplied = nil
         self.pendingCommit = nil
@@ -119,14 +134,14 @@ final class PanelSession {
     }
 
     /// Switch the active engine (engine selector / Enhance with AI) — a user choice,
-    /// persisted as the new default once it lands (spec §5.5).
+    /// persisted as the new session override once it lands (spec §5.5).
     func switchEngine(_ engine: EngineID) {
         pendingCommit = (engine, target)
         applyEngine(engine)
     }
 
     /// Switch the target language (inline switcher) — a user choice, persisted as
-    /// the new default once it lands (spec §5.5).
+    /// the new session override once it lands (spec §5.5).
     func switchTarget(_ target: TargetLanguage) {
         pendingCommit = (engine, target)
         applyTarget(target)
@@ -147,6 +162,19 @@ final class PanelSession {
 
     /// Retry the current engine/target on the same snapshot.
     func retry() { present() }
+
+    /// Revert to the Settings-screen default (spec §5.5): discards any session
+    /// override without re-arming it as a new "last used" (`onCommit` never fires
+    /// for this), re-arms auto-enhance eligibility exactly as a fresh trigger
+    /// would, and tells the owner to forget the persisted override.
+    func resetToDefault() {
+        pendingCommit = nil
+        didAutoEnhance = false
+        engine = resetEngine
+        target = resetTarget
+        onReset?()
+        present()
+    }
 
     /// Core: cancel the in-flight task, open a **new** operation (this is what
     /// makes even a cache hit cancel a slow in-flight response), then serve the

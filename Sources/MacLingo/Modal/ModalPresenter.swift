@@ -14,6 +14,10 @@ final class ModalPresenter {
         let availableEngines: [EngineID]
         let policy: SendPolicy
         let providerConfigRevision: UInt64
+        /// The Settings-screen default this trigger resolved, ignoring any session
+        /// override — what the modal's Reset action restores (spec §5.5).
+        let resetEngine: EngineID
+        let resetTarget: TargetLanguage
     }
 
     private let services: TranslationServiceProviding
@@ -21,8 +25,11 @@ final class ModalPresenter {
     /// Invoked when any panel's paid engine rejects the key (spec §5.5).
     var onProviderUnauthorized: ((EngineID) -> Void)?
     /// Invoked when any panel commits an explicit engine/target switch, so it can be
-    /// persisted as the new default (spec §5.5).
+    /// persisted as the new session override (spec §5.5).
     var onCommit: ((EngineID, TargetLanguage) -> Void)?
+    /// Invoked when any panel's Reset action runs, so any persisted session
+    /// override can be forgotten (spec §5.5).
+    var onReset: (() -> Void)?
 
     /// All live controllers (for cleanup + live reconciliation fan-out).
     private var controllers: [ModalController] = []
@@ -64,7 +71,8 @@ final class ModalPresenter {
         let session = PanelSession(
             services: services, engine: context.engine, target: context.target,
             providerConfigRevision: context.providerConfigRevision,
-            availableEngines: context.availableEngines, policy: context.policy)
+            availableEngines: context.availableEngines, policy: context.policy,
+            resetEngine: context.resetEngine, resetTarget: context.resetTarget)
         session.onProviderUnauthorized = { [weak self] engine in
             self?.onProviderUnauthorized?(engine)
         }
@@ -74,6 +82,7 @@ final class ModalPresenter {
             self?.handlePinChange(changed, pinned: pinned)
         }
         controller.onCommit = { [weak self] engine, target in self?.onCommit?(engine, target) }
+        controller.onReset = { [weak self] in self?.onReset?() }
         return controller
     }
 

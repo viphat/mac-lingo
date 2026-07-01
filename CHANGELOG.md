@@ -4,12 +4,20 @@ All notable changes to MacLingo are documented here. Dates are ISO-8601.
 
 ## [Unreleased]
 
-### Modal — remember last translation choice (§5.5)
+### Modal — remember last translation choice, with a Reset (§5.5)
 - An explicit, successful in-modal switch of target language or engine
-  (including "Enhance with AI") now persists as the new app-wide default, so
-  the next hotkey trigger — even after relaunch — starts from that choice.
-  Automatic engine changes (auto-enhance's AI upgrade pass, live-reconciliation
-  fallback) and declined paid confirmations never persist.
+  (including "Enhance with AI") now persists as a **session override**
+  (`lastUsedTargetLanguage`/`lastUsedEngine`), so the next hotkey trigger —
+  even after relaunch — starts from that choice. The Settings-screen default
+  itself is untouched by modal switches. Automatic engine changes
+  (auto-enhance's AI upgrade pass, live-reconciliation fallback) and declined
+  paid confirmations never persist.
+- A new **Reset** button in the modal reverts the current panel to the
+  Settings-screen default and clears the session override, so future triggers
+  also fall back to it until the user switches again. A stale session
+  override (e.g. pointing at an AI provider that's since been swapped out or
+  had its key removed) is cleared at launch and on live reconciliation,
+  rather than silently resolving to a different configured engine.
 
 ### Phase 7 — Networking trust boundary, remote config & hardening (§6.1, §9)
 - **Dual network allowlists** with case-insensitive host classification

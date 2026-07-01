@@ -27,8 +27,11 @@ final class ModalController: NSObject, NSWindowDelegate {
     /// between its transient slot and the pinned set.
     var onPinnedChange: ((ModalController, Bool) -> Void)?
     /// Called when the session commits an explicit engine/target switch, so it can
-    /// be persisted as the new default (spec §5.5).
+    /// be persisted as the new session override (spec §5.5).
     var onCommit: ((EngineID, TargetLanguage) -> Void)?
+    /// Called when the session's Reset action runs, so any persisted session
+    /// override can be forgotten (spec §5.5).
+    var onReset: (() -> Void)?
 
     private var keyMonitor: Any?
     private var localMouseMonitor: Any?
@@ -51,6 +54,7 @@ final class ModalController: NSObject, NSWindowDelegate {
             DispatchQueue.main.async { [weak self] in self?.sizeToFit() }
         }
         session.onCommit = { [weak self] engine, target in self?.onCommit?(engine, target) }
+        session.onReset = { [weak self] in self?.onReset?() }
         syncSelectors()
         model.apply(session.display, target: session.target)
     }
@@ -105,6 +109,7 @@ final class ModalController: NSObject, NSWindowDelegate {
         model.onCopy = { [weak self] in self?.copyActiveResult() }
         model.onTogglePin = { [weak self] in self?.togglePin() }
         model.onEnhance = { [weak self] in self?.enhance() }
+        model.onReset = { [weak self] in self?.session.resetToDefault() }
         model.onSwitchEngine = { [weak self] engine in self?.session.switchEngine(engine) }
         model.onSwitchTarget = { [weak self] target in self?.session.switchTarget(target) }
         model.onConfirmPaid = { [weak self] in self?.session.confirmPaidSend() }
@@ -124,7 +129,8 @@ final class ModalController: NSObject, NSWindowDelegate {
         session.begin(
             snapshot: snapshot, engine: context.engine, target: context.target,
             availableEngines: context.availableEngines, policy: context.policy,
-            providerConfigRevision: context.providerConfigRevision)
+            providerConfigRevision: context.providerConfigRevision,
+            resetEngine: context.resetEngine, resetTarget: context.resetTarget)
         // Size to the initial (loading) state before showing, then position.
         sizeToFit()
         panel.orderFront(nil)

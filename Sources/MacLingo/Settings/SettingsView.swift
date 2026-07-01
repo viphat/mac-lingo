@@ -95,6 +95,14 @@ struct SettingsView: View {
                 }
             }
 
+            Text(
+                "Switching the target language or engine inside the translate popup only "
+                    + "changes that session; the popup's Reset button brings back the "
+                    + "baseline above."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
             Picker("Capture method", selection: $settings.captureMethod) {
                 ForEach(CaptureMethod.allCases, id: \.self) { method in
                     Text(method.displayName).tag(method)

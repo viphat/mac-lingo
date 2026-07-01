@@ -59,11 +59,18 @@ final class TranslationCoordinator {
     }
 
     /// Build the presentation context from current settings: the resolved engine
-    /// (spec §6.1 fallback chain), the configured engine selector list, the
-    /// spend/size policy (spec §6.5), and the current provider-config revision.
+    /// (spec §6.1 fallback chain), seeded from any session override
+    /// (`lastUsedEngine`/`lastUsedTargetLanguage`) and falling back to the
+    /// Settings-screen default; the configured engine selector list; the
+    /// spend/size policy (spec §6.5); the current provider-config revision; and the
+    /// Settings-screen default alone (ignoring the override), for the modal's Reset
+    /// action (spec §5.5).
     private func makeContext() -> ModalPresenter.Context {
         let configured = settings.configuredEngines
-        let engine = EngineResolver.resolve(preferred: settings.defaultEngine, available: configured)
+        let engine = EngineResolver.resolve(
+            preferredEngine: settings.lastUsedEngine, fallback: settings.defaultEngine,
+            available: configured)
+        let target = settings.lastUsedTargetLanguage ?? settings.targetLanguage
         let available = Self.availableEngines(configured)
 
         // Auto-enhance (spec §3.1): only after a non-AI default, only if an AI
@@ -78,9 +85,12 @@ final class TranslationCoordinator {
             autoEnhance: settings.autoEnhance,
             autoEnhanceEngine: autoEnhanceEngine)
 
+        let resetEngine = EngineResolver.resolve(preferred: settings.defaultEngine, available: configured)
+
         return ModalPresenter.Context(
-            engine: engine, target: settings.targetLanguage, availableEngines: available,
-            policy: policy, providerConfigRevision: settings.providerConfigRevision)
+            engine: engine, target: target, availableEngines: available,
+            policy: policy, providerConfigRevision: settings.providerConfigRevision,
+            resetEngine: resetEngine, resetTarget: settings.targetLanguage)
     }
 
     /// Concrete engines the modal may switch among, given what's configured.
