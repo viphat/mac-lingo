@@ -72,6 +72,12 @@ final class AppModel: ObservableObject {
         presenter.onProviderUnauthorized = { [weak self] engine in
             self?.handleProviderUnauthorized(engine)
         }
+        // An explicit, successful in-modal switch becomes the new default, so the
+        // next trigger starts where the user left off (spec §5.5).
+        presenter.onCommit = { [weak self] engine, target in
+            self?.settings.targetLanguage = target
+            self?.settings.defaultEngine = EngineResolver.defaultEngine(for: engine)
+        }
     }
 
     /// Run once at launch: migrate settings (fail-safe), reconcile system/provider

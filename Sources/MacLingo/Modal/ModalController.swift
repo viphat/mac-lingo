@@ -26,6 +26,9 @@ final class ModalController: NSObject, NSWindowDelegate {
     /// Called when the pinned state changes, so the presenter can move the panel
     /// between its transient slot and the pinned set.
     var onPinnedChange: ((ModalController, Bool) -> Void)?
+    /// Called when the session commits an explicit engine/target switch, so it can
+    /// be persisted as the new default (spec §5.5).
+    var onCommit: ((EngineID, TargetLanguage) -> Void)?
 
     private var keyMonitor: Any?
     private var localMouseMonitor: Any?
@@ -47,6 +50,7 @@ final class ModalController: NSObject, NSWindowDelegate {
             self.model.apply(display, target: self.session.target)
             DispatchQueue.main.async { [weak self] in self?.sizeToFit() }
         }
+        session.onCommit = { [weak self] engine, target in self?.onCommit?(engine, target) }
         syncSelectors()
         model.apply(session.display, target: session.target)
     }

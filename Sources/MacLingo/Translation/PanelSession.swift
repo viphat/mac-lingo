@@ -60,6 +60,15 @@ final class PanelSession {
     /// Invoked when a paid engine rejects the key (HTTP 401/403) on the current
     /// operation, so live reconciliation can mark it unconfigured (spec §5.5).
     var onProviderUnauthorized: ((EngineID) -> Void)?
+    /// Invoked when an explicit, user-initiated engine/target switch actually lands
+    /// (spec §5.5 "remember last choice"), so the owner can persist it as the new
+    /// default. Never fires for automatic switches (auto-enhance, live-reconciliation
+    /// fallback) or a declined paid confirmation.
+    var onCommit: ((EngineID, TargetLanguage) -> Void)?
+
+    /// An explicit switch armed here, consumed by `update(_:)` once it lands as a
+    /// `.result` (spec §5.5). Cleared without firing on decline/close/new capture.
+    private var pendingCommit: (engine: EngineID, target: TargetLanguage)?
 
     init(
         services: TranslationServiceProviding,
@@ -100,6 +109,7 @@ final class PanelSession {
         if let providerConfigRevision { self.providerConfigRevision = providerConfigRevision }
         self.didAutoEnhance = false
         self.lastApplied = nil
+        self.pendingCommit = nil
         guard snapshot != nil else {
             registry.open()
             update(.noSelection)
@@ -108,14 +118,29 @@ final class PanelSession {
         present()
     }
 
-    /// Switch the active engine (engine selector / Enhance with AI).
+    /// Switch the active engine (engine selector / Enhance with AI) — a user choice,
+    /// persisted as the new default once it lands (spec §5.5).
     func switchEngine(_ engine: EngineID) {
+        pendingCommit = (engine, target)
+        applyEngine(engine)
+    }
+
+    /// Switch the target language (inline switcher) — a user choice, persisted as
+    /// the new default once it lands (spec §5.5).
+    func switchTarget(_ target: TargetLanguage) {
+        pendingCommit = (engine, target)
+        applyTarget(target)
+    }
+
+    /// Non-persisting engine switch for automatic changes (auto-enhance, live
+    /// reconciliation) that must never overwrite the user's chosen default.
+    private func applyEngine(_ engine: EngineID) {
         self.engine = engine
         present()
     }
 
-    /// Switch the target language (inline switcher).
-    func switchTarget(_ target: TargetLanguage) {
+    /// Non-persisting target switch, mirroring `applyEngine`.
+    private func applyTarget(_ target: TargetLanguage) {
         self.target = target
         present()
     }
@@ -196,6 +221,7 @@ final class PanelSession {
     func cancelPaidSend() {
         guard case .confirmPaid = display else { return }
         pending = nil
+        pendingCommit = nil
         if let last = lastApplied {
             engine = last.engine
             target = last.target
@@ -249,7 +275,7 @@ final class PanelSession {
             !result.engine.isAI, aiEngine != engine
         else { return }
         didAutoEnhance = true
-        switchEngine(aiEngine)  // re-presents → pauses for confirmation if over threshold
+        applyEngine(aiEngine)  // re-presents → pauses for confirmation if over threshold
     }
 
     /// Close/dismiss: cancel in-flight work and invalidate the operation so any
@@ -257,6 +283,7 @@ final class PanelSession {
     func close() {
         task?.cancel()
         pending = nil
+        pendingCommit = nil
         registry.close()
     }
 
@@ -283,7 +310,12 @@ final class PanelSession {
         if case .confirmPaid = display {
             task?.cancel()
             pending = nil
-            if engineInvalid { engine = resolvedEngine }
+            if engineInvalid {
+                engine = resolvedEngine
+                // The config just invalidated the engine this held confirmation was
+                // armed for; any pending user commit referred to that stale engine.
+                pendingCommit = nil
+            }
             present()
             return
         }
@@ -292,7 +324,7 @@ final class PanelSession {
 
         if engineInvalid {
             task?.cancel()
-            switchEngine(resolvedEngine)
+            applyEngine(resolvedEngine)
         } else if case .loading = display {
             // Mid-flight under the old config → redo under the new revision.
             present()
@@ -321,6 +353,10 @@ final class PanelSession {
         display = newDisplay
         if case .result = newDisplay {
             lastApplied = AppliedState(engine: engine, target: target, display: newDisplay)
+            if let pendingCommit {
+                self.pendingCommit = nil
+                onCommit?(pendingCommit.engine, pendingCommit.target)
+            }
         }
         onChange?(newDisplay)
     }

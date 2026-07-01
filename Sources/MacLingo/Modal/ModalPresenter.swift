@@ -20,6 +20,9 @@ final class ModalPresenter {
 
     /// Invoked when any panel's paid engine rejects the key (spec §5.5).
     var onProviderUnauthorized: ((EngineID) -> Void)?
+    /// Invoked when any panel commits an explicit engine/target switch, so it can be
+    /// persisted as the new default (spec §5.5).
+    var onCommit: ((EngineID, TargetLanguage) -> Void)?
 
     /// All live controllers (for cleanup + live reconciliation fan-out).
     private var controllers: [ModalController] = []
@@ -70,6 +73,7 @@ final class ModalPresenter {
         controller.onPinnedChange = { [weak self] changed, pinned in
             self?.handlePinChange(changed, pinned: pinned)
         }
+        controller.onCommit = { [weak self] engine, target in self?.onCommit?(engine, target) }
         return controller
     }
 

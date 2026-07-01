@@ -4,6 +4,13 @@ All notable changes to MacLingo are documented here. Dates are ISO-8601.
 
 ## [Unreleased]
 
+### Modal — remember last translation choice (§5.5)
+- An explicit, successful in-modal switch of target language or engine
+  (including "Enhance with AI") now persists as the new app-wide default, so
+  the next hotkey trigger — even after relaunch — starts from that choice.
+  Automatic engine changes (auto-enhance's AI upgrade pass, live-reconciliation
+  fallback) and declined paid confirmations never persist.
+
 ### Phase 7 — Networking trust boundary, remote config & hardening (§6.1, §9)
 - **Dual network allowlists** with case-insensitive host classification
   (`TrustMaterial.allowlist(for:)`): translation-data vs control-plane, never
